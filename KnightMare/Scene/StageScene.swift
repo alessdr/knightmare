@@ -179,8 +179,12 @@ final class StageScene: SKScene {
     private let pickupsLayerNode = SKNode()
     let shotsLayerNode = SKNode()
     let playerSpriteNode = SKSpriteNode()
+    /// Holds Popolon; masked to below the castle wall while he walks through the stage exit door.
+    let playerClipNode = SKCropNode()
     let shieldSpriteNode = SKSpriteNode()
     let flashOverlayNode = SKSpriteNode(color: .white, size: CGSize(width: 256, height: 176))
+    /// Black bands (top, bottom, left, right) of the closing stage-exit window (`ObjectSystem::fadeMap`).
+    let exitWindowNodes: [SKSpriteNode] = (0..<4).map { _ in SKSpriteNode(color: .black, size: .zero) }
 
     private let visibleRowOffsets: [Int] = Array(-1...(StageScene.screenRows + 1))
     private var tileGridNodes: [[SKSpriteNode]] = []
@@ -222,13 +226,21 @@ final class StageScene: SKScene {
         addChild(enemiesLayerNode)
         addChild(pickupsLayerNode)
         addChild(shotsLayerNode)
-        addChild(playerSpriteNode)
+        playerSpriteNode.removeFromParent()
+        playerClipNode.addChild(playerSpriteNode)
+        addChild(playerClipNode)
         addChild(shieldSpriteNode)
 
         flashOverlayNode.position = CGPoint(x: Self.msxWidth / 2, y: Self.msxHeight / 2)
         flashOverlayNode.zPosition = 50
         flashOverlayNode.alpha = 0
         addChild(flashOverlayNode)
+
+        for node in exitWindowNodes {
+            node.zPosition = 49
+            node.isHidden = true
+            addChild(node)
+        }
 
         startNewStage()
     }
@@ -359,6 +371,8 @@ final class StageScene: SKScene {
         flashOverlayNode.color = .white
         flashOverlayNode.alpha = 0
         playerSpriteNode.isHidden = false
+        playerClipNode.maskNode = nil
+        hideExitWindow()
 
         tilePx = 0
         clockMs = 0
@@ -412,18 +426,27 @@ final class StageScene: SKScene {
             currentRow = 0
             return
         }
-        var solid = true
-        currentRow = min(StageMapData.mapRows0 - StageMapData.screenRows, currentRow + 5)
-        while solid && currentRow < StageMapData.mapRows0 - StageMapData.screenRows {
-            let r = currentRow + Self.playerInitRow
-            let c = Self.playerInitCol
-            solid = mapData.isSolid(row: r, col: c)
-                && mapData.isSolid(row: r, col: c + 1)
-                && mapData.isSolid(row: r + 1, col: c)
-            if solid {
-                currentRow += 1
+        // Measure against the pristine map the next attempt will use: bridges opened in this attempt close again
+        mapData = StageMapData(assetName: definition.mapAssetName)
+
+        // Step back until Popolon's whole 2×2 footprint is free. He spawns at `y = playerInitRow * 8` in sprite space,
+        // i.e. screen rows `playerInitRow - 2 ... playerInitRow - 1` (`mapCollide` subtracts 16 px). The reference only
+        // skipped rows where *every* cell was solid, two rows too low, which could respawn him half inside a river.
+        let lastRow = StageMapData.mapRows0 - StageMapData.screenRows
+        let footprintTopRow = Self.playerInitRow - 2
+        currentRow = min(lastRow, currentRow + 5)
+        while currentRow < lastRow && isFootprintSolid(topRow: currentRow + footprintTopRow, col: Self.playerInitCol) {
+            currentRow += 1
+        }
+    }
+
+    private func isFootprintSolid(topRow: Int, col: Int) -> Bool {
+        for r in topRow...(topRow + 1) {
+            for c in col...(col + 1) where mapData.isSolid(row: r, col: c) {
+                return true
             }
         }
+        return false
     }
 
     func togglePause() {
@@ -1053,7 +1076,7 @@ final class StageScene: SKScene {
                 continue
             }
 
-            // 1c. Check Stage 1 Boss (`Medusa`) Hitbox (`BossSystem::hitBoss`)
+            // 1c. Check the stage boss hitbox (`BossSystem::hitBoss`; a shielded boss still absorbs the shot)
             if boss.status == .active && sRect.intersects(bossHitBoxRect()) {
                 _ = hitBoss()
                 shot.isFree = true
@@ -1224,11 +1247,19 @@ final class StageScene: SKScene {
     }
 
     private func openRiverBridge(block: QuestionBlock) {
-        // Spawns bridge sprite (`t[48] = {184, 136, 32, 8}`) at `(block.x - 8, block.y)` and clears `4×4` water solidity
-        let node = SKSpriteNode(texture: bridgeSpriteTexture, size: CGSize(width: 32, height: 8))
-        node.zPosition = 5
-        blocksLayerNode.addChild(node)
-        bridgeSprites.append(BridgeSprite(node: node, x: block.x - Self.tileSizeF, y: block.y))
+        // Clears the `4×4` water solidity (rows `mapRow - 2 ... mapRow + 1`, cols `mapCol - 1 ... mapCol + 2`) and
+        // stacks four bridge planks (`t[48] = {184, 136, 32, 8}`) over it, matching the map's prebuilt bridges.
+        // (The reference draws a single plank on the block row, leaving three rows of walkable "water".)
+        for rowOffset in -2...1 {
+            let node = SKSpriteNode(texture: bridgeSpriteTexture, size: CGSize(width: 32, height: 8))
+            node.zPosition = 5
+            blocksLayerNode.addChild(node)
+            bridgeSprites.append(BridgeSprite(
+                node: node,
+                x: block.x - Self.tileSizeF,
+                y: block.y + CGFloat(rowOffset) * Self.tileSizeF
+            ))
+        }
 
         mapData.makeBridgeGround(row: block.mapRow + 1, col: block.mapCol - 1, down: false)
         refreshMapTileTextures()
@@ -1578,12 +1609,12 @@ final class StageScene: SKScene {
         }
 
         if let shadowNode = boss.shadowNode, boss.status != .notSpawned {
-            let shadowY = boss.shadowFixedY ?? (boss.y + Self.tileSizeF * 6.0)
+            let shadowY = boss.shadowFixedY ?? (boss.y + boss.shadowOffset.y)
             shadowNode.position = Self.scenePosition(
-                msxX: boss.x,
+                msxX: boss.x + boss.shadowOffset.x,
                 msxTopY: shadowY - Self.tileSizeX2,
-                width: 40,
-                height: 6
+                width: shadowNode.size.width,
+                height: shadowNode.size.height
             )
         }
 
@@ -1685,6 +1716,37 @@ final class StageScene: SKScene {
                 height: 6
             )
         }
+    }
+
+    // MARK: - Stage Exit Door & Closing Window
+
+    /// Hides Popolon above the bottom edge of the castle wall (map rows `0...2`), so walking up into the
+    /// doorway notch makes him disappear inside the castle instead of being drawn over the bricks.
+    func clipPlayerBelowCastleWall() {
+        let wallBottomY = CGFloat((3 - currentRow) * Self.tileSize + tilePx)
+        let visibleHeight = max(0, Self.msxHeight - wallBottomY)
+        let mask = SKSpriteNode(color: .white, size: CGSize(width: Self.msxWidth, height: visibleHeight))
+        mask.position = CGPoint(x: Self.msxWidth / 2.0, y: visibleHeight / 2.0)
+        playerClipNode.maskNode = mask
+    }
+
+    /// Paints black everywhere except the `(left, top, width, height)` window, in MSX top-left coordinates.
+    func showExitWindow(left: CGFloat, top: CGFloat, width: CGFloat, height: CGFloat) {
+        let bands = [
+            CGRect(x: 0, y: 0, width: Self.msxWidth, height: top),
+            CGRect(x: 0, y: top + height, width: Self.msxWidth, height: Self.msxHeight - top - height),
+            CGRect(x: 0, y: top, width: left, height: height),
+            CGRect(x: left + width, y: top, width: Self.msxWidth - left - width, height: height)
+        ]
+        for (node, band) in zip(exitWindowNodes, bands) {
+            node.isHidden = band.width <= 0 || band.height <= 0
+            node.size = CGSize(width: max(0, band.width), height: max(0, band.height))
+            node.position = Self.scenePosition(msxX: band.minX, msxTopY: band.minY, width: band.width, height: band.height)
+        }
+    }
+
+    func hideExitWindow() {
+        for node in exitWindowNodes { node.isHidden = true }
     }
 
     private static func scenePosition(msxX: CGFloat, msxTopY: CGFloat, width: CGFloat, height: CGFloat) -> CGPoint {

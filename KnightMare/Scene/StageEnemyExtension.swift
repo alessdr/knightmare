@@ -122,9 +122,11 @@ extension StageScene {
             spawnSpeedMs = 400
             gpr2 = (spawnX > Self.msxWidth / 2.0) ? -1.0 : 1.0
             gpr3 = spawnX
-        case 13: // Red diving thing
+        case 13: // Red diving thing: enters from its side edge at `y = 16`, `gpr3` = horizontal direction
             spawnSpeedMs = 300
-            gpr2 = (spawnX > Self.msxWidth / 2.0) ? -90.0 : 90.0
+            spawnX = (spawnX < Self.msxWidth / 2.0) ? 0 : Self.msxWidth - Self.tileSizeX2
+            spawnY = Self.tileSizeX2
+            gpr3 = (spawnX == 0) ? 1.0 : -1.0
         case 14: // Reverse Bat: rises from near the bottom, sweeping in from its side (`gpr3`)
             spawnSpeedMs = 1000
             spawnY = Self.msxHeight - Self.tileSizeX4
@@ -393,12 +395,36 @@ extension StageScene {
             case 12: // Yellow thing: fast dive with the sideways drift picked at spawn
                 speedX = o.gpr2
 
-            case 13: // Red thing
-                speedX *= cos(o.gpr2 * .pi / 180.0)
-                if o.y > 40 && abs(o.gpr2) > 0 {
-                    o.gpr2 += (o.gpr2 > 0 ? -40.0 : 40.0) * dt
-                } else {
+            case 13: // Red thing: crosses toward the far side, loops around a 270° ellipse, then leaves upward
+                // `gpr2`: 0 = approaching, 999 = leaving, otherwise the ellipse angle; `gpr3`: direction, then ellipse center Y
+                if o.gpr2 == 0 {
+                    if o.gpr3 > 0 && o.x - Self.tileSizeF > Self.msxWidth / 2.0 + Self.tileSizeX4 {
+                        o.gpr2 = 315
+                        o.gpr3 = o.y + Self.tileSizeX4 + Self.tileSizeF / 2.0
+                        speedX = 0
+                        speedY = 0
+                    } else if o.gpr3 < 0 && o.x + Self.tileSizeF < Self.msxWidth / 2.0 - Self.tileSizeF * 6.0 {
+                        o.gpr2 = -135
+                        o.gpr3 = o.y + Self.tileSizeX4 + Self.tileSizeF / 2.0
+                        speedX = 0
+                        speedY = 0
+                    } else {
+                        speedX *= o.gpr3
+                    }
+                } else if o.gpr2 == 999 {
+                    speedX *= o.gpr3
                     speedY *= -1
+                } else {
+                    let radians = o.gpr2 * .pi / 180.0
+                    o.x = Self.msxWidth / 2.0 - Self.tileSizeF + Self.tileSizeF * 9.0 * cos(radians)
+                    o.y = o.gpr3 + Self.tileSizeF * 6.0 * sin(radians)
+                    o.gpr2 += (o.gpr2 < 0) ? -0.9 : 0.9
+                    if o.gpr2 < -405 || o.gpr2 >= 585 {
+                        o.gpr3 = (o.gpr2 > 0) ? 1.0 : -1.0
+                        o.gpr2 = 999
+                    }
+                    speedX = 0
+                    speedY = 0
                 }
 
             case 15: // Sorcerer
@@ -498,7 +524,7 @@ extension StageScene {
             case 12: // Yellow thing: static sprite
                 break
             case 13:
-                o.flipX = (animTick % 2 == 0)
+                applyEnemyFrameOffset(o, offsetX: slowFrames, baseTileId: 13)
             case 15: // Sorcerer
                 if o.gpr2 == 0 || o.gpr2 == 1 {
                     applyEnemyFrameOffset(o, offsetX: twoFrames, baseTileId: 15, sheetYOverride: 136)
@@ -545,7 +571,11 @@ extension StageScene {
         var angle: CGFloat = 0
 
         switch o.id {
-        case 6, 12, 14: // Dot bullet aimed at Popolon (`enemyFire` default, speed 70)
+        case 6, 12, 13, 14: // Dot bullet aimed at Popolon (`enemyFire` default, speed 70)
+            // From Stage 3 on, 12/13 hold fire during the first half of the map (`s.stage > 2 && s.row > MAP_ROWS / 2`)
+            if (o.id == 12 || o.id == 13) && definition.number > 2 && currentRow > StageMapData.mapRows / 2 {
+                return
+            }
             weaponId = 23
             speed = 70
             angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)

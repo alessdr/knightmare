@@ -6,6 +6,7 @@ struct StageDefinition: Equatable {
     enum BossKind: Equatable {
         case medusa // Stage 1 (Medusa / Hecate)
         case scytheReaper // Stage 2 (Lissajous movement, orbiting scythe shot `33`)
+        case wingedDemon // Stage 3 (wing shield cycle, 7-way fan shot `28`)
     }
 
     let number: Int
@@ -60,7 +61,22 @@ struct StageDefinition: Equatable {
         enemyFireMaxRow: StageMapData.mapRows
     )
 
-    static let all: [StageDefinition] = [.stage1, .stage2]
+    static let stage3 = StageDefinition(
+        number: 3,
+        title: "RIVER CROSSING",
+        mapAssetName: "stage3_map",
+        tilesetOffsetPx: 40,
+        bossBaseLife: 30,
+        shootChance: [0.3, 0.5, 0.7],
+        // Odd stages share the Stage 1 theme (GDD §2.1); the reference's own boss track isn't bundled
+        stageMusic: .stage1,
+        bossMusic: .boss1,
+        bossKind: .wingedDemon,
+        clearMessage: "THE RIVERS ARE BEHIND YOU",
+        enemyFireMaxRow: StageMapData.mapRows
+    )
+
+    static let all: [StageDefinition] = [.stage1, .stage2, .stage3]
 
     /// Definition for a 1-based stage number, falling back to the last implemented stage.
     static func forStage(_ number: Int) -> StageDefinition {

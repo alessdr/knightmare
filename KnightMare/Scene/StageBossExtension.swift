@@ -40,25 +40,35 @@ extension StageScene {
             boss.y = (currentRow == 0) ? (Self.tileSizeF * 6.0) : (-Self.tileSizeF * 3.0) // 48 or -24
         case .scytheReaper:
             boss.y = (currentRow == 0) ? (Self.tileSizeF * 5.0) : (-Self.tileSizeF * 4.0) // 40 or -32
-            // Wide boss shadow (`t[37]`) six tiles below the body (`spawnShadow(body, 0, TILE_SIZE * 6, false, 37)`)
-            let shadow = SKSpriteNode(texture: shotTextureCache[37], size: CGSize(width: 40, height: 6))
-            shadow.zPosition = 8
-            shadowsLayerNode.addChild(shadow)
-            boss.shadowNode = shadow
+            // Wide boss shadow six tiles below the body (`spawnShadow(body, 0, TILE_SIZE * 6, false, 37)`)
+            spawnBossShadow(tileId: 37, offset: CGPoint(x: 0, y: Self.tileSizeF * 6.0))
+        case .wingedDemon:
+            boss.y = (currentRow == 0) ? (Self.tileSizeF * 6.0) : (-Self.tileSizeF * 3.0) // 48 or -24
+            // Regular shadow under the feet (`spawnShadow(body, TILE_SIZE * 1.5, TILE_SIZE * 7, false, 0)`)
+            spawnBossShadow(tileId: 39, offset: CGPoint(x: Self.tileSizeF * 1.5, y: Self.tileSizeF * 7.0))
         }
 
-        let tex = bossFrameTexture(frameIndex: bossBaseFrameIndex)
+        let tex = bossSheetTexture(x: bossBaseFrame.x, y: bossBaseFrame.y)
         let node = SKSpriteNode(texture: tex, size: CGSize(width: 40, height: 40))
         node.zPosition = 9.5
         enemiesLayerNode.addChild(node)
         boss.node = node
     }
 
+    private func spawnBossShadow(tileId: Int, offset: CGPoint) {
+        guard let rect = MSXObjectTiles.objTiles[tileId] else { return }
+        let shadow = SKSpriteNode(texture: shotTextureCache[tileId], size: CGSize(width: rect.w, height: rect.h))
+        shadow.zPosition = 8
+        shadowsLayerNode.addChild(shadow)
+        boss.shadowNode = shadow
+        boss.shadowOffset = offset
+    }
+
     func activateBoss() {
         guard boss.status == .waiting else { return }
         boss.status = .active
         // The shadow stops following the body's vertical bob (`shadow->gpr3 = 1 // fixed height`)
-        boss.shadowFixedY = boss.y + Self.tileSizeF * 6.0
+        boss.shadowFixedY = boss.y + boss.shadowOffset.y
 
         switch definition.bossKind {
         case .medusa:
@@ -71,6 +81,10 @@ extension StageScene {
             enqueueBossMinion(delayMs: 9500)
         case .scytheReaper:
             break
+        case .wingedDemon:
+            // Starts with its wings folded: only the shield is up (`activateHitBox(2, false)`)
+            boss.phase = 2
+            boss.isShielded = true
         }
         syncHudState()
     }
@@ -136,20 +150,29 @@ extension StageScene {
             }
 
         case .scytheReaper:
-            // Lissajous drift: slow wide sweep across the screen with a quick, shallow vertical bob
-            let center = (Self.msxWidth - Self.tileSizeF * 6.0) / 2.0 // 104
-            boss.phaseX += 60.0 * dt * 1.2
-            boss.phaseY += 60.0 * dt * 9.0
-            boss.x = center + (center - Self.tileSizeX4) * sin(boss.phaseX * .pi / 180.0)
-            boss.y = Self.tileSizeF * 5.0 + 6.0 * cos(boss.phaseY * .pi / 180.0)
+            // Slow wide sweep across the screen with a quick, shallow vertical bob
+            moveBossLissajous(speedX: 1.2, speedY: 9.0, height: 6.0, baseY: Self.tileSizeF * 5.0, dt: dt)
+        case .wingedDemon:
+            // Faster sweep with a slower, deeper bob
+            moveBossLissajous(speedX: 1.8, speedY: 3.6, height: 12.0, baseY: Self.tileSizeF * 6.0, dt: dt)
         }
     }
 
-    /// Column (40 px frames) of the boss's first frame inside `bosses.png`.
-    var bossBaseFrameIndex: Int {
+    /// Lissajous drift shared by the Stage 2/3/4 bosses (`BossSystem::moveBoss` cases 2-4).
+    private func moveBossLissajous(speedX: CGFloat, speedY: CGFloat, height: CGFloat, baseY: CGFloat, dt: CGFloat) {
+        let center = (Self.msxWidth - Self.tileSizeF * 6.0) / 2.0 // 104
+        boss.phaseX += 60.0 * dt * speedX
+        boss.phaseY += 60.0 * dt * speedY
+        boss.x = center + (center - Self.tileSizeX4) * sin(boss.phaseX * .pi / 180.0)
+        boss.y = baseY + height * cos(boss.phaseY * .pi / 180.0)
+    }
+
+    /// Top-left of the boss's first frame inside `bosses.png` (`BossSystem::showBossBody`).
+    var bossBaseFrame: (x: Int, y: Int) {
         switch definition.bossKind {
-        case .medusa: return 0
-        case .scytheReaper: return 2 // `showBossBody` stage 2: `tx = 80`
+        case .medusa: return (0, 0)
+        case .scytheReaper: return (80, 0)
+        case .wingedDemon: return (200, 0)
         }
     }
 
@@ -158,11 +181,34 @@ extension StageScene {
         switch definition.bossKind {
         case .medusa:
             let frameIndex = (animTick % 8 > 3 && boss.status != .dying) ? 1 : 0
-            node.texture = bossFrameTexture(frameIndex: frameIndex)
+            node.texture = bossSheetTexture(x: frameIndex * 40, y: 0)
         case .scytheReaper:
             // No idle animation: the frame only changes with the damage skin (`+40` / `+80` px)
-            node.texture = bossFrameTexture(frameIndex: bossBaseFrameIndex + boss.skinOffsetX / 40)
+            node.texture = bossSheetTexture(x: bossBaseFrame.x + boss.skinOffsetX, y: 0)
+        case .wingedDemon:
+            animateWingedDemon(node)
         }
+    }
+
+    /// Stage 3 boss cycle (`BossSystem::animateBoss` case 3), 48 animation ticks long: wings folded and shielded for
+    /// the first half; then wings open (vulnerable), flapping between two frames, with a 7-way fan fired at tick 34.
+    /// Eye colour follows the damage phase: white (2) → yellow (3) → third colour (4).
+    private func animateWingedDemon(_ node: SKSpriteNode) {
+        let tick = animTick % 48
+        var x = (boss.phase == 3) ? 80 : 200
+        let y = (boss.phase == 2) ? 0 : 40
+
+        if tick > 23 {
+            if tick == 24 {
+                boss.isShielded = false
+            } else if tick == 34 && boss.status == .active && freezeTimer < 0 && playerState == .playing {
+                fireDemonFan()
+            }
+            x += (animTick % 4 < 2 || boss.status == .dying) ? 40 : 80
+        } else if tick == 0 {
+            boss.isShielded = true
+        }
+        node.texture = bossSheetTexture(x: x, y: y)
     }
 
     func bossFireTick() {
@@ -175,6 +221,27 @@ extension StageScene {
         case .scytheReaper:
             guard tickCount % 120 == 0 else { return }
             fireScythe()
+        case .wingedDemon:
+            break // only fires from its wing cycle (`animateWingedDemon`)
+        }
+    }
+
+    /// Stage 3 boss (`calcId == 53`): 7 fireballs (`28`) fanned ±60° in 20° steps around a downward aim at Popolon.
+    private func fireDemonFan() {
+        let originX = boss.x + Self.tileSizeX2
+        let originY = boss.y + Self.tileSizeF * 3.0
+        let aim = min(200.0, max(160.0, compassAngleTowardPopolon(fromX: originX, fromY: originY)))
+        let speed: CGFloat = 110
+        for spread in stride(from: -60.0, through: 60.0, by: 20.0) {
+            let radians = (aim - spread) * .pi / 180.0
+            spawnEnemyShot(
+                weaponId: 28,
+                x: originX,
+                y: originY,
+                speedX: speed * sin(radians),
+                speedY: -speed * cos(radians),
+                angleDeg: aim - spread
+            )
         }
     }
 
@@ -195,7 +262,6 @@ extension StageScene {
     }
 
     private func fireMedusaRay() {
-
         // Stage 1 Boss (`calcId == 51`) fires energy ray (`weaponId = 24`, speed = 120)
         let startX = boss.x + 15.0
         let startY = boss.y + 28.0
@@ -231,9 +297,25 @@ extension StageScene {
     func hitBoss() -> Bool {
         guard boss.status == .active else { return false }
 
+        if definition.bossKind == .wingedDemon && boss.isShielded {
+            // Folded wings deflect the shot (`BossSystem::hitBoss` case 3)
+            RetroAudioSynthesizer.shared.playSfx(.bossShield)
+            return true
+        }
+
         let damage = playerWeapon.isSuperWeapon ? 2 : 1
+        let previousHp = boss.hp
         boss.hp = max(0, boss.hp - damage)
         syncHudState()
+
+        if definition.bossKind == .wingedDemon {
+            // Next eye colour at 2/3 and 1/3 of the base life (`status++` at `aux * 2` and `aux`). Crossing is used
+            // instead of the reference's exact match so 2-damage super weapons can't skip a threshold.
+            let third = definition.bossBaseLife / 3
+            for threshold in [third * 2, third] where previousHp > threshold && boss.hp <= threshold && boss.hp > 0 {
+                boss.phase = min(4, boss.phase + 1)
+            }
+        }
 
         if definition.bossKind == .scytheReaper {
             // Swap to a more battered skin at each third of the base life (`BossSystem::hitBoss` action 90)
@@ -344,6 +426,8 @@ extension StageScene {
 
         RetroAudioSynthesizer.shared.playStageStartFanfare()
         playerState = .movingToPortal
+        // From here on Popolon is drawn behind the castle wall, so he vanishes into the doorway
+        clipPlayerBelowCastleWall()
         syncHudState()
     }
 
@@ -363,6 +447,7 @@ extension StageScene {
         }
         playerIsMoving = true
 
+        // Fully inside the castle: the wall's bottom edge (y = 24) is past his feet (sprite space `y` = bottom - 16)
         if Int(playerY) <= Int(targetY) {
             playerSpriteNode.isHidden = true
             shieldSpriteNode.isHidden = true
@@ -371,13 +456,24 @@ extension StageScene {
         }
     }
 
+    /// Closes the screen toward its centre (`ObjectSystem::fadeMap`): each animation tick the window shrinks
+    /// 2 px vertically and 3.2 px horizontally per side, holds briefly at its smallest, then the stage ends.
     func updateStageClearWipe() {
         boss.wipeStep += 1
-        let progress = min(1.0, CGFloat(boss.wipeStep) / 22.0)
-        flashOverlayNode.color = .black
-        flashOverlayNode.alpha = progress
+        let closingSteps = 30
+        let holdSteps = 10
+        let step = CGFloat(min(boss.wipeStep, closingSteps))
+        let insetY = 2.0 * step
+        let insetX = 3.2 * step
+        showExitWindow(
+            left: insetX,
+            top: insetY,
+            width: Self.msxWidth - insetX * 2.0,
+            height: Self.msxHeight - insetY * 2.0
+        )
 
-        if boss.wipeStep >= 24 {
+        if boss.wipeStep >= closingSteps + holdSteps {
+            showExitWindow(left: Self.msxWidth / 2.0, top: Self.msxHeight / 2.0, width: 0, height: 0)
             playerState = .stageCleared
             gameState?.triggerStageClear(weapon: playerWeapon, speedLevel: playerSpeedLevel)
         }
@@ -385,18 +481,14 @@ extension StageScene {
 
     // MARK: - Texture Helper & Interactive Boss Jump
 
-    func bossFrameTexture(frameIndex: Int) -> SKTexture? {
-        if let cached = bossFrameTextureCache[frameIndex] {
+    /// 40×40 boss frame whose top-left corner is `(x, y)` in `bosses.png`.
+    func bossSheetTexture(x: Int, y: Int) -> SKTexture? {
+        let key = y * 1000 + x
+        if let cached = bossFrameTextureCache[key] {
             return cached
         }
-        let tex = SpriteSheetManager.shared.texture(
-            from: .bosses,
-            x: frameIndex * 40,
-            y: 0,
-            width: 40,
-            height: 40
-        )
-        bossFrameTextureCache[frameIndex] = tex
+        let tex = SpriteSheetManager.shared.texture(from: .bosses, x: x, y: y, width: 40, height: 40)
+        bossFrameTextureCache[key] = tex
         return tex
     }
 

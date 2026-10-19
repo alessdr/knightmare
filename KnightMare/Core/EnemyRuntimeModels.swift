@@ -166,9 +166,13 @@ final class StageBossRuntime {
     var phaseY: CGFloat = 0
     /// Horizontal offset (px) into `bosses.png` for the current damage skin (Stage 2 boss).
     var skinOffsetX: Int = 0
-    /// Ground shadow; its Y is pinned once the boss activates.
+    /// Ground shadow, drawn at `shadowOffset` from the body; its Y is pinned once the boss activates.
     var shadowNode: SKSpriteNode?
+    var shadowOffset: CGPoint = .zero
     var shadowFixedY: CGFloat?
+    /// Stage 3 boss: damage phase (`2...4`, picks the eye colour) and whether the folded wings block shots.
+    var phase: Int = 2
+    var isShielded: Bool = false
 
     var node: SKSpriteNode?
 
@@ -178,7 +182,10 @@ final class StageBossRuntime {
         skinOffsetX = 0
         shadowNode?.removeFromParent()
         shadowNode = nil
+        shadowOffset = .zero
         shadowFixedY = nil
+        phase = 2
+        isShielded = false
         status = .notSpawned
         x = 108
         y = -24

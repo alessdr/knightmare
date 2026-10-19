@@ -722,6 +722,15 @@ extension StageScene {
             } else {
                 shot.x += shot.speedX * dt
                 shot.y += shot.speedY * dt
+                if let stopY = shot.stopAtY, shot.speedY > 0, shot.y >= stopY {
+                    // Lands and catches fire (`moveShot` case 28): becomes the big ground fire `35`
+                    shot.speedX = 0
+                    shot.speedY = 0
+                    shot.stopAtY = nil
+                    shot.weaponId = 35
+                    shot.node.size = CGSize(width: 16, height: 16)
+                    shot.node.texture = shotTextureCache[35]
+                }
             }
             if shot.y < 0 || shot.y > Self.msxHeight + Self.tileSizeX2 || shot.x < 0 || shot.x > Self.msxWidth {
                 shot.isFree = true
@@ -744,6 +753,15 @@ extension StageScene {
                     shot.node.zRotation = -CGFloat(newRot) * (.pi / 2.0)
                 }
                 shot.gpr1 += 1
+            } else if shot.weaponId == 35 {
+                // Ground fire flickers between two frames and dies out after 18 animation ticks (`animateShot` case 28)
+                shot.burnTicks += 1
+                if shot.burnTicks > 18 {
+                    shot.isFree = true
+                    continue
+                }
+                let frameX = 112 + ((shot.burnTicks % 6 > 2) ? 16 : 0)
+                shot.node.texture = SpriteSheetManager.shared.texture(from: .objects, x: frameX, y: 120, width: 16, height: 16)
             } else if shot.weaponId == 33 {
                 // Scythe spins through 4 frames laid out side by side in `objects.png`
                 let frameX = 48 + 16 * (animTick % 4)

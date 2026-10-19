@@ -1152,7 +1152,8 @@ final class StageScene: SKScene {
 
         for eShot in enemyShots where !eShot.isFree {
             let esRect = enemyShotBox(eShot)
-            if shieldHits > 0 && powerUpState != .invincible && powerUpState != .transparent && esRect.intersects(shieldRect) {
+            // Landed ground fire (`35`) slips past the shield (`hitShield`: a stopped `28` is not absorbed)
+            if shieldHits > 0 && eShot.weaponId != 35 && powerUpState != .invincible && powerUpState != .transparent && esRect.intersects(shieldRect) {
                 let force = (eShot.weaponId == 23 || (25...27).contains(eShot.weaponId)) ? 1 : 3
                 damageShield(force: force)
                 eShot.isFree = true
@@ -1603,8 +1604,8 @@ final class StageScene: SKScene {
             bossNode.position = Self.scenePosition(
                 msxX: boss.x,
                 msxTopY: bossTopY,
-                width: 40,
-                height: 40
+                width: bossFrameSize.width,
+                height: bossFrameSize.height
             )
         }
 

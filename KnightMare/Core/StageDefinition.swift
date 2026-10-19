@@ -7,6 +7,7 @@ struct StageDefinition: Equatable {
         case medusa // Stage 1 (Medusa / Hecate)
         case scytheReaper // Stage 2 (Lissajous movement, orbiting scythe shot `33`)
         case wingedDemon // Stage 3 (wing shield cycle, 7-way fan shot `28`)
+        case cyclops // Stage 4 (damage skins, fireballs that land and burn at Popolon's height)
     }
 
     let number: Int
@@ -76,7 +77,22 @@ struct StageDefinition: Equatable {
         enemyFireMaxRow: StageMapData.mapRows
     )
 
-    static let all: [StageDefinition] = [.stage1, .stage2, .stage3]
+    static let stage4 = StageDefinition(
+        number: 4,
+        title: "CASTLE GROUNDS",
+        mapAssetName: "stage4_map",
+        tilesetOffsetPx: 72,
+        bossBaseLife: 48,
+        shootChance: [0.4, 0.6, 0.8],
+        // Even stages reuse the Stage 2 theme; the reference's own tracks aren't bundled
+        stageMusic: .stage2,
+        bossMusic: .boss2,
+        bossKind: .cyclops,
+        clearMessage: "THE CASTLE GATE AWAITS",
+        enemyFireMaxRow: StageMapData.mapRows
+    )
+
+    static let all: [StageDefinition] = [.stage1, .stage2, .stage3, .stage4]
 
     /// Definition for a 1-based stage number, falling back to the last implemented stage.
     static func forStage(_ number: Int) -> StageDefinition {

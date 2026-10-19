@@ -44,12 +44,18 @@ extension StageScene {
             spawnBossShadow(tileId: 37, offset: CGPoint(x: 0, y: Self.tileSizeF * 6.0))
         case .wingedDemon:
             boss.y = (currentRow == 0) ? (Self.tileSizeF * 6.0) : (-Self.tileSizeF * 3.0) // 48 or -24
+            boss.phaseX = 45 // `body->gpr2 = 45`
             // Regular shadow under the feet (`spawnShadow(body, TILE_SIZE * 1.5, TILE_SIZE * 7, false, 0)`)
             spawnBossShadow(tileId: 39, offset: CGPoint(x: Self.tileSizeF * 1.5, y: Self.tileSizeF * 7.0))
+        case .cyclops:
+            boss.y = (currentRow == 0) ? (Self.tileSizeF * 5.0) : (-Self.tileSizeF * 4.0) // 40 or -32
+            boss.phaseX = 45 // `body->gpr2 = 45`
+            // Wide shadow under its taller 40×48 body (`spawnShadow(body, 0, TILE_SIZE * 8, false, 37)`)
+            spawnBossShadow(tileId: 37, offset: CGPoint(x: 0, y: Self.tileSizeF * 8.0))
         }
 
         let tex = bossSheetTexture(x: bossBaseFrame.x, y: bossBaseFrame.y)
-        let node = SKSpriteNode(texture: tex, size: CGSize(width: 40, height: 40))
+        let node = SKSpriteNode(texture: tex, size: bossFrameSize)
         node.zPosition = 9.5
         enemiesLayerNode.addChild(node)
         boss.node = node
@@ -79,7 +85,7 @@ extension StageScene {
             enqueueBossMinion(delayMs: 3000)
             enqueueBossMinion(delayMs: 6500)
             enqueueBossMinion(delayMs: 9500)
-        case .scytheReaper:
+        case .scytheReaper, .cyclops:
             break
         case .wingedDemon:
             // Starts with its wings folded: only the shield is up (`activateHitBox(2, false)`)
@@ -152,9 +158,17 @@ extension StageScene {
         case .scytheReaper:
             // Slow wide sweep across the screen with a quick, shallow vertical bob
             moveBossLissajous(speedX: 1.2, speedY: 9.0, height: 6.0, baseY: Self.tileSizeF * 5.0, dt: dt)
-        case .wingedDemon:
+        case .wingedDemon, .cyclops:
             // Faster sweep with a slower, deeper bob
             moveBossLissajous(speedX: 1.8, speedY: 3.6, height: 12.0, baseY: Self.tileSizeF * 6.0, dt: dt)
+        }
+    }
+
+    /// Size of one boss frame in `bosses.png` (`showBossBody`: the Stage 4 boss is a tile taller).
+    var bossFrameSize: CGSize {
+        switch definition.bossKind {
+        case .medusa, .scytheReaper, .wingedDemon: return CGSize(width: 40, height: 40)
+        case .cyclops: return CGSize(width: 40, height: 48)
         }
     }
 
@@ -173,6 +187,7 @@ extension StageScene {
         case .medusa: return (0, 0)
         case .scytheReaper: return (80, 0)
         case .wingedDemon: return (200, 0)
+        case .cyclops: return (0, 80)
         }
     }
 
@@ -182,9 +197,9 @@ extension StageScene {
         case .medusa:
             let frameIndex = (animTick % 8 > 3 && boss.status != .dying) ? 1 : 0
             node.texture = bossSheetTexture(x: frameIndex * 40, y: 0)
-        case .scytheReaper:
+        case .scytheReaper, .cyclops:
             // No idle animation: the frame only changes with the damage skin (`+40` / `+80` px)
-            node.texture = bossSheetTexture(x: bossBaseFrame.x + boss.skinOffsetX, y: 0)
+            node.texture = bossSheetTexture(x: bossBaseFrame.x + boss.skinOffsetX, y: bossBaseFrame.y)
         case .wingedDemon:
             animateWingedDemon(node)
         }
@@ -223,7 +238,30 @@ extension StageScene {
             fireScythe()
         case .wingedDemon:
             break // only fires from its wing cycle (`animateWingedDemon`)
+        case .cyclops:
+            guard tickCount % 120 == 0 else { return }
+            fireCyclopsFireball()
         }
+    }
+
+    /// Stage 4 boss (`calcId == 54`, stage 4 variant): a red fireball (`28`, sprite `+16` px) thrown downward
+    /// toward Popolon that lands at the height he stood when it was fired and burns there for a moment.
+    private func fireCyclopsFireball() {
+        let originX = boss.x + Self.tileSizeX2
+        let originY = boss.y + Self.tileSizeF * 4.0
+        let aim = min(210.0, max(150.0, compassAngleTowardPopolon(fromX: originX, fromY: originY)))
+        let radians = aim * .pi / 180.0
+        let speed: CGFloat = 110
+        guard let shot = spawnEnemyShot(
+            weaponId: 28,
+            x: originX,
+            y: originY,
+            speedX: speed * sin(radians),
+            speedY: -speed * cos(radians),
+            angleDeg: aim
+        ) else { return }
+        shot.stopAtY = playerY
+        shot.node.texture = SpriteSheetManager.shared.texture(from: .objects, x: 99 + 16, y: 35, width: 9, height: 9)
     }
 
     /// Stage 3 boss (`calcId == 53`): 7 fireballs (`28`) fanned ±60° in 20° steps around a downward aim at Popolon.
@@ -291,7 +329,7 @@ extension StageScene {
     }
 
     func bossBodyRect() -> CGRect {
-        CGRect(x: boss.x + 4.0, y: boss.y + 4.0, width: 32.0, height: 32.0)
+        CGRect(x: boss.x + 4.0, y: boss.y + 4.0, width: bossFrameSize.width - 8.0, height: bossFrameSize.height - 8.0)
     }
 
     func hitBoss() -> Bool {
@@ -317,7 +355,7 @@ extension StageScene {
             }
         }
 
-        if definition.bossKind == .scytheReaper {
+        if definition.bossKind == .scytheReaper || definition.bossKind == .cyclops {
             // Swap to a more battered skin at each third of the base life (`BossSystem::hitBoss` action 90)
             let third = definition.bossBaseLife / 3
             if third > 0 && boss.hp % third == 0 {
@@ -481,13 +519,13 @@ extension StageScene {
 
     // MARK: - Texture Helper & Interactive Boss Jump
 
-    /// 40×40 boss frame whose top-left corner is `(x, y)` in `bosses.png`.
+    /// Boss frame (`bossFrameSize`) whose top-left corner is `(x, y)` in `bosses.png`.
     func bossSheetTexture(x: Int, y: Int) -> SKTexture? {
         let key = y * 1000 + x
         if let cached = bossFrameTextureCache[key] {
             return cached
         }
-        let tex = SpriteSheetManager.shared.texture(from: .bosses, x: x, y: y, width: 40, height: 40)
+        let tex = SpriteSheetManager.shared.texture(from: .bosses, x: x, y: y, width: Int(bossFrameSize.width), height: Int(bossFrameSize.height))
         bossFrameTextureCache[key] = tex
         return tex
     }

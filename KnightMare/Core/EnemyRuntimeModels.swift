@@ -74,6 +74,9 @@ final class EnemyShot {
     var orbitCenter: CGPoint?
     var orbitAngle: CGFloat = 0
     var orbitStep: CGFloat = 1
+    /// Stage 4 fireball (`28`): lands once it falls to this Y, then burns in place as `35` for `burnTicks` frames.
+    var stopAtY: CGFloat?
+    var burnTicks: Int = 0
 
     init(
         weaponId: Int,

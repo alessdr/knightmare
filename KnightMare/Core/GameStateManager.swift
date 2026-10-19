@@ -10,7 +10,6 @@ final class GameStateManager {
     enum ScreenState: Equatable {
         case prologue
         case titleScreen
-        case stageIntro
         case playingStage
         case stageClear
         case gameOver
@@ -136,17 +135,18 @@ final class GameStateManager {
         carriedWeapon = .arrow
         carriedSpeedLevel = 0
         wavesClearedCount = 0
-        beginStageIntro()
+        beginStage()
     }
 
     /// Moves on to the next stage, keeping score, lives, weapon and speed upgrades.
     func advanceToNextStage() {
         guard hasNextStage else { return }
         currentStage += 1
-        beginStageIntro()
+        beginStage()
     }
 
-    private func beginStageIntro() {
+    /// Goes straight into the stage's gameplay; the scene starts the stage music itself.
+    private func beginStage() {
         isStagePaused = false
         stageProgressRows = 0
         currentWeaponName = carriedWeapon.displayName
@@ -158,15 +158,7 @@ final class GameStateManager {
         activeEnemiesCount = 0
         bossHp = 0
         bossMaxHp = 0
-        RetroAudioSynthesizer.shared.playStageStartFanfare()
         withAnimation(.easeInOut(duration: 0.3)) {
-            currentScreen = .stageIntro
-        }
-    }
-
-    func enterStageGameplay() {
-        isStagePaused = false
-        withAnimation(.easeInOut(duration: 0.25)) {
             currentScreen = .playingStage
         }
     }

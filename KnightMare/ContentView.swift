@@ -16,10 +16,6 @@ struct ContentView: View {
                 TitleScreenView(gameState: gameState)
                     .transition(.opacity)
 
-            case .stageIntro:
-                StageIntroView(gameState: gameState)
-                    .transition(.opacity)
-
             case .playingStage:
                 StageGameplayView(gameState: gameState)
                     .id(gameState.currentStage)

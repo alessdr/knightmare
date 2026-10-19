@@ -84,9 +84,8 @@ extension StageScene {
         case 3: // Bat wave
             spawnSpeedMs = 200
             gpr3 = (spawnX > Self.msxWidth / 2.0) ? -1.0 : 1.0
-        case 4: // Knight
+        case 4: // Blue Knight (`gpr2` = x where it started side-stepping, `gpr3` = side-step direction)
             spawnSpeedMs = 500
-            gpr3 = 90.0 * ((spawnX > Self.msxWidth / 2.0) ? -1.0 : 1.0)
         case 5: // Cloud: enters from the nearest side edge at `y = 32`, `gpr3` = horizontal direction
             gpr3 = (spawnX < Self.msxWidth / 2.0) ? -1.0 : 1.0
             spawnX = (gpr3 < 0) ? 0 : Self.msxWidth - Self.tileSizeX2
@@ -108,8 +107,17 @@ extension StageScene {
         case 8, 12: // Black Demon disguised as Cloud & Yellow thing: drift sideways toward Popolon
             let aimDeg = min(20.0, atan2(abs(spawnX - playerX), abs(spawnY - playerY)) * 180.0 / .pi)
             gpr2 = data.speedX * ((spawnX > playerX) ? -1.0 : 1.0) * sin(aimDeg * .pi / 180.0)
-        case 9: // Death ghost
+        case 9: // Death ghost: enters from a side column; `gpr2` = loop angle, `gpr3` = loop direction
             spawnSpeedMs = 300
+            if spawnX < Self.msxWidth / 2.0 {
+                spawnX = Self.tileSizeX4
+                gpr2 = 180
+                gpr3 = -1
+            } else {
+                spawnX = Self.msxWidth - Self.tileSizeX4 - Self.tileSizeX2
+                gpr2 = 1
+                gpr3 = 1
+            }
         case 10: // Zombie
             if objCfg > 0 {
                 gpr1 = 0
@@ -118,10 +126,15 @@ extension StageScene {
             } else {
                 gpr2 *= (spawnX > Self.msxWidth / 2.0) ? -1.0 : 1.0
             }
-        case 11: // Ghost
+        case 11: // Ghost: enters at a side edge; `gpr2` = sway phase, `gpr3` = current facing
             spawnSpeedMs = 400
-            gpr2 = (spawnX > Self.msxWidth / 2.0) ? -1.0 : 1.0
-            gpr3 = spawnX
+            if spawnX < Self.msxWidth / 2.0 {
+                spawnX = 0
+                gpr2 = 90
+            } else {
+                spawnX = Self.msxWidth
+                gpr2 = 270
+            }
         case 13: // Red diving thing: enters from its side edge at `y = 16`, `gpr3` = horizontal direction
             spawnSpeedMs = 300
             spawnX = (spawnX < Self.msxWidth / 2.0) ? 0 : Self.msxWidth - Self.tileSizeX2
@@ -231,18 +244,32 @@ extension StageScene {
                 speedX *= sin(o.gpr2 * .pi / 180.0) * o.gpr3
                 o.gpr2 += 120.0 * dt
 
-            case 4: // Knight
-                speedX *= sin(o.gpr2 * .pi / 180.0)
-                speedY *= cos(o.gpr2 * .pi / 180.0)
-                let nextX = o.x + speedX * dt
-                let nextY = o.y + speedY * dt
-                if o.y > 24 && mapCollideForEnemy(px: nextX, py: nextY) {
-                    o.gpr2 = (o.gpr2 != 0) ? 0 : o.gpr3
-                } else if o.y > 60 && o.gpr2 == 0 && Bool.random() {
-                    if !mapCollideForEnemy(px: o.x + o.gpr3 * 0.25, py: o.y) {
-                        o.gpr2 = o.gpr3
+            case 4: // Blue Knight: slow march down; side-steps up to 48 px away from the centre once Popolon is near
+                if currentRow <= 0 {
+                    // Boss arena: walk down, then turn and charge along its heading when Popolon gets close
+                    if o.gpr3 == 0 {
+                        if playerY - o.y < 55 {
+                            o.gpr2 = o.velocityAngleDeg() - 90
+                            o.gpr3 = 1
+                        } else {
+                            o.gpr2 = 90
+                        }
+                    }
+                    let speed: CGFloat = (o.gpr3 != 0) ? 60 : 30
+                    speedX = speed * cos(o.gpr2 * .pi / 180.0)
+                    speedY = speed * sin(o.gpr2 * .pi / 180.0)
+                } else {
+                    if o.gpr2 == 0 && playerY - o.y < 55 {
+                        o.gpr2 = o.x
+                        o.gpr3 = (o.x > Self.msxWidth / 2.0) ? -1.0 : 1.0
+                    } else if o.gpr3 != 0 && abs(o.gpr2 - o.x) > 48 {
+                        o.gpr3 = 0
+                    }
+                    if o.gpr3 != 0 {
+                        speedX = data.speedX * o.gpr3
+                        speedY = 0
                     } else {
-                        o.gpr3 *= -1
+                        speedX = 0
                     }
                 }
 
@@ -360,11 +387,26 @@ extension StageScene {
                     }
                 }
 
-            case 9: // Death ghost
-                speedX *= sin(o.gpr2 * .pi / 180.0)
-                if o.gpr2 == 0 && (playerY - o.y < 100) {
-                    o.gpr2 = (playerX > o.x) ? 90.0 : -90.0
-                    fireEnemyProjectile(from: o)
+            case 9: // Death ghost: drops to mid-screen, sweeps a wide wobbly loop around the centre, then flies off upward
+                let midY = Self.msxHeight / 2.0
+                if (o.y < midY + Self.tileSizeF && o.gpr2 <= 180) || o.gpr2 == 999 {
+                    speedX = 0
+                    speedY = data.speedY * (o.gpr2 == 999 ? -1.0 : 1.0)
+                } else {
+                    let direction: CGFloat = (o.gpr3 < 0) ? -1.0 : 1.0
+                    let deg = CGFloat.pi / 180.0
+                    let wobble = (direction > 0)
+                        ? cos(o.gpr2 * 0.666 * deg) * Self.tileSizeX2
+                        : -cos((o.gpr2 + 90) * 0.666 * deg) * Self.tileSizeX2
+                    let radiusX = Self.tileSizeF * 9.0 + wobble
+                    o.x = Self.msxWidth / 2.0 - Self.tileSizeF + radiusX * cos(o.gpr2 * direction * deg)
+                    o.y = midY + Self.tileSizeF + (midY - Self.tileSizeF * 3.0) * sin(o.gpr2 * direction * deg)
+                    o.gpr2 += 0.6
+                    if (direction > 0 && o.gpr2 >= 540) || (direction < 0 && o.gpr2 >= 720) {
+                        o.gpr2 = 999
+                    }
+                    speedX = 0
+                    speedY = 0
                 }
 
             case 10: // Zombie
@@ -387,10 +429,22 @@ extension StageScene {
                     o.gpr2 *= -1
                 }
 
-            case 11: // Ghost
-                let a = (o.y + o.gpr3) * 1.5
-                speedX *= sin(a * .pi / 180.0) * o.gpr2
-                o.flipX = (speedX > 0)
+            case 11: // Ghost: drifts down while swaying across half the screen, wrapping around the side edges
+                let previousX = o.x
+                let sway = (Self.msxWidth / 2.0 - Self.tileSizeX2) * -cos(o.gpr2 * .pi / 180.0)
+                o.x = (o.x <= Self.msxWidth / 2.0) ? sway : (Self.msxWidth - Self.tileSizeX2) + sway
+                let facing: CGFloat = (o.x > previousX) ? 1.0 : -1.0
+                if facing != o.gpr3 {
+                    o.flipX = (facing < 0)
+                    o.gpr3 = facing
+                }
+                if o.x < 0 {
+                    o.x = Self.msxWidth - Self.tileSizeX2
+                } else if o.x > Self.msxWidth - Self.tileSizeX2 {
+                    o.x = 0
+                }
+                o.gpr2 += data.speedX * dt
+                speedX = 0
 
             case 12: // Yellow thing: fast dive with the sideways drift picked at spawn
                 speedX = o.gpr2
@@ -500,15 +554,14 @@ extension StageScene {
             switch o.id {
             case 6, 14:
                 applyEnemyFrameOffset(o, offsetX: slowFrames, baseTileId: o.id)
-            case 1, 2, 3, 9, 10, 16:
+            case 1, 2, 3, 10, 16:
                 if o.id == 10 && o.gpr3 != 0 {
                     applyEnemyFrameOffset(o, offsetX: 32 + twoFrames, baseTileId: 10)
                 } else {
                     applyEnemyFrameOffset(o, offsetX: twoFrames, baseTileId: o.id)
                 }
-            case 4: // Knight
-                let offset = (o.gpr1 == 3) ? twoFrames : (16 * (5 - Int(o.gpr1)))
-                applyEnemyFrameOffset(o, offsetX: offset, baseTileId: 4)
+            case 4, 9: // Blue Knight & Death ghost: a single frame mirrored back and forth (`effect` flip)
+                o.flipX = (animTick % 6 > 2)
             case 5, 8: // Cloud, and the Black Demon while disguised; the revealed demon just flips
                 if o.id == 5 || o.gpr3 <= 0 {
                     applyEnemyFrameOffset(o, offsetX: slowFrames, baseTileId: 5)
@@ -557,7 +610,9 @@ extension StageScene {
         let maxShootY = Self.msxHeight * 0.62 // ~109 px
         for o in enemies where !o.isFree {
             guard o.id < 20 && o.id != 8 else { continue }
-            guard o.y >= 16 && o.y <= maxShootY else { continue }
+            // Before Stage 5 enemies hold fire while still entering the top of the screen (`s.stage < 5 && o.y < 16`)
+            if definition.number < 5 && o.y < 16 { continue }
+            guard o.y <= maxShootY else { continue }
             if Double.random(in: 0...1) < definition.shootChance(for: gameState?.difficulty ?? .normal) {
                 fireEnemyProjectile(from: o)
             }
@@ -571,7 +626,7 @@ extension StageScene {
         var angle: CGFloat = 0
 
         switch o.id {
-        case 6, 12, 13, 14: // Dot bullet aimed at Popolon (`enemyFire` default, speed 70)
+        case 6, 11, 12, 13, 14: // Dot bullet aimed at Popolon (`enemyFire` default, speed 70)
             // From Stage 3 on, 12/13 hold fire during the first half of the map (`s.stage > 2 && s.row > MAP_ROWS / 2`)
             if (o.id == 12 || o.id == 13) && definition.number > 2 && currentRow > StageMapData.mapRows / 2 {
                 return
@@ -579,18 +634,15 @@ extension StageScene {
             weaponId = 23
             speed = 70
             angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
-        case 2, 3, 11:
+        case 2, 3:
             weaponId = 23 // Dot bullet
             angle = o.velocityAngleDeg()
             if angle == 0 {
                 angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
             }
-        case 4: // Knight directional arrow (`29`, `30`, `31`)
-            angle = round(o.velocityAngleDeg() / 45.0) * 45.0
-            if angle == 0 || angle >= 360 { angle = 180 }
-            let mod90 = Int(abs(angle)) % 90 == 0
-            let mod180 = Int(abs(angle)) % 180 == 0
-            weaponId = mod90 ? (mod180 ? 29 : 30) : 31
+        case 4: // Blue Knight arrow (`29`/`30`/`31`) in one of 8 directions
+            fireKnightArrow(from: o)
+            return
         case 7: // Skeleton spinning bone (`25`), only while walking intact
             guard o.gpr3 == 0 && o.gpr2 <= 1 else { return }
             weaponId = 25
@@ -601,7 +653,11 @@ extension StageScene {
             speed = 91
             shotsCount = 3
             angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y) + 30.0
-        case 9, 16: // Death ghost energy ray (`24`)
+        case 9: // Death ghost energy ray (`24`) aimed at Popolon, speed 100
+            weaponId = 24
+            speed = 100
+            angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
+        case 16: // Red Death ghost energy ray (`24`)
             weaponId = 24
             angle = o.velocityAngleDeg()
             if angle == 0 {
@@ -635,6 +691,38 @@ extension StageScene {
                 angle += 45.0
             }
         }
+    }
+
+    /// Blue Knight arrow (`enemyFire` case 4): aimed at Popolon, drawn with the arrow sprite and quarter-turn
+    /// rotation of its 45° sector and launched from the matching side of the knight.
+    func fireKnightArrow(from o: EnemyObject) {
+        let angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
+        var x = o.x + Self.tileSizeF
+        var y = o.y + Self.tileSizeF
+        let weaponId: Int
+        let rot: Int
+        switch angle {
+        case 23..<67: weaponId = 31; rot = 3; x += Self.tileSizeF; y -= Self.tileSizeF * 2.5
+        case 292..<337: weaponId = 31; rot = 2; x -= Self.tileSizeX2; y -= Self.tileSizeF * 2.5
+        case 112..<157: weaponId = 31; rot = 1; x += Self.tileSizeF; y += Self.tileSizeF
+        case 202..<247: weaponId = 31; rot = 0; x -= Self.tileSizeX2; y += Self.tileSizeF
+        case 67..<112: weaponId = 30; rot = 1; x += Self.tileSizeF
+        case 247..<292: weaponId = 30; rot = 0; x -= Self.tileSizeF * 2.5
+        case 157..<202: weaponId = 29; rot = 0; y += Self.tileSizeF
+        default: weaponId = 29; rot = 2; y -= Self.tileSizeF * 2.5
+        }
+        let speed: CGFloat = 70
+        let radians = angle * .pi / 180.0
+        guard let shot = spawnEnemyShot(
+            weaponId: weaponId,
+            x: x,
+            y: y,
+            speedX: speed * sin(radians),
+            speedY: -speed * cos(radians),
+            angleDeg: angle
+        ) else { return }
+        shot.rotQuarterTurns = rot
+        shot.node.zRotation = -CGFloat(rot) * (.pi / 2.0)
     }
 
     /// Fires a single aimed Parting Shot ("Tiro de Despedida") toward Popolon as the enemy exits the bottom border.
@@ -767,9 +855,16 @@ extension StageScene {
                 let frameX = 48 + 16 * (animTick % 4)
                 shot.node.texture = SpriteSheetManager.shared.texture(from: .objects, x: frameX, y: 120, width: 16, height: 16)
             } else if shot.weaponId == 32 {
-                shot.rotQuarterTurns = shot.gpr1 % 4
-                shot.node.zRotation = -CGFloat(shot.rotQuarterTurns) * (.pi / 2.0)
+                // Axe spin (`animateShot` case 32): every other tick step through
+                // frame A, A turned 90°, frame B (`+16` px), B turned 90°
                 shot.gpr1 += 1
+                let m = shot.gpr1 % 8
+                guard m % 2 == 0 else { continue }
+                shot.rotQuarterTurns = (m == 2 || m == 6) ? 1 : 0
+                shot.node.texture = SpriteSheetManager.shared.texture(
+                    from: .objects, x: 177 + ((m >= 4) ? 16 : 0), y: 34, width: 13, height: 13
+                )
+                shot.node.zRotation = -CGFloat(shot.rotQuarterTurns) * (.pi / 2.0)
             }
         }
     }

@@ -52,6 +52,10 @@ extension StageScene {
             boss.phaseX = 45 // `body->gpr2 = 45`
             // Wide shadow under its taller 40×48 body (`spawnShadow(body, 0, TILE_SIZE * 8, false, 37)`)
             spawnBossShadow(tileId: 37, offset: CGPoint(x: 0, y: Self.tileSizeF * 8.0))
+        case .redKnight:
+            boss.y = (currentRow == 0) ? (Self.tileSizeF * 6.0) : (-Self.tileSizeF * 3.0) // 48 or -24
+            // First dash heads left (`body->gpr3 = s.player.x < SCREEN_WIDTH ? -120 : 120`); no shadow
+            boss.dashVelocity = -120
         }
 
         let tex = bossSheetTexture(x: bossBaseFrame.x, y: bossBaseFrame.y)
@@ -91,6 +95,10 @@ extension StageScene {
             // Starts with its wings folded: only the shield is up (`activateHitBox(2, false)`)
             boss.phase = 2
             boss.isShielded = true
+        case .redKnight:
+            // Starts guarded until its helmet first opens (`activateShield(true)`, `activateHitBox(2, false)`)
+            boss.isShielded = true
+            boss.stepTick = 0
         }
         syncHudState()
     }
@@ -161,14 +169,44 @@ extension StageScene {
         case .wingedDemon, .cyclops:
             // Faster sweep with a slower, deeper bob
             moveBossLissajous(speedX: 1.8, speedY: 3.6, height: 12.0, baseY: Self.tileSizeF * 6.0, dt: dt)
+        case .redKnight:
+            moveRedKnight(dt: dt)
         }
     }
 
-    /// Size of one boss frame in `bosses.png` (`showBossBody`: the Stage 4 boss is a tile taller).
+    /// Stage 5 boss (`BossSystem::moveBoss` case 5). Every 200 ticks it closes its helmet and dashes toward
+    /// Popolon; on multiples of 300 a closed helmet opens (the only time it can be hurt). Each dash decays over
+    /// ~120 ticks at `BOSS_SPEED`, clamped to the playfield edges.
+    private func moveRedKnight(dt: CGFloat) {
+        let edgeLeft = Self.tileSizeX4 // 32
+        let edgeRight = (Self.msxWidth - Self.tileSizeX4) - Self.tileSizeF * 5.0 // 184
+
+        boss.stepTick += 1
+        if boss.stepTick % 200 == 0 {
+            boss.dashVelocity = (boss.x > playerX) ? -120 : 120
+            if abs(boss.x - edgeLeft) < 0.5 && boss.dashVelocity < 0 {
+                boss.dashVelocity = -boss.dashVelocity
+            } else if abs(boss.x - edgeRight) < 0.5 && boss.dashVelocity > 0 {
+                boss.dashVelocity = -boss.dashVelocity
+            }
+            boss.isShielded = true
+        }
+        if boss.isShielded && boss.stepTick % 300 == 0 {
+            boss.isShielded = false
+            RetroAudioSynthesizer.shared.playSfx(.helmet)
+        }
+        if boss.dashVelocity != 0 {
+            let decay: CGFloat = (boss.dashVelocity < 0) ? 1 : -1
+            boss.dashVelocity += decay
+            boss.x = min(max(boss.x - 60.0 * dt * decay, edgeLeft), edgeRight)
+        }
+    }
+
+    /// Size of one boss frame in `bosses.png` (`showBossBody`: the Stage 4/5 bosses are a tile taller).
     var bossFrameSize: CGSize {
         switch definition.bossKind {
         case .medusa, .scytheReaper, .wingedDemon: return CGSize(width: 40, height: 40)
-        case .cyclops: return CGSize(width: 40, height: 48)
+        case .cyclops, .redKnight: return CGSize(width: 40, height: 48)
         }
     }
 
@@ -188,6 +226,7 @@ extension StageScene {
         case .scytheReaper: return (80, 0)
         case .wingedDemon: return (200, 0)
         case .cyclops: return (0, 80)
+        case .redKnight: return (120, 80)
         }
     }
 
@@ -202,6 +241,13 @@ extension StageScene {
             node.texture = bossSheetTexture(x: bossBaseFrame.x + boss.skinOffsetX, y: bossBaseFrame.y)
         case .wingedDemon:
             animateWingedDemon(node)
+        case .redKnight:
+            // Two-frame march; the open-visor frames (`+80` px) show while its helmet is open and it can be hurt.
+            // (The reference picks them from the dash direction, which hides the cue the sprites were drawn for.)
+            var x = bossBaseFrame.x
+            if animTick % 10 > 4 && boss.status != .dying { x += 40 }
+            if !boss.isShielded { x += 80 }
+            node.texture = bossSheetTexture(x: x, y: bossBaseFrame.y)
         }
     }
 
@@ -241,6 +287,18 @@ extension StageScene {
         case .cyclops:
             guard tickCount % 120 == 0 else { return }
             fireCyclopsFireball()
+        case .redKnight:
+            guard tickCount % 70 == 0 else { return }
+            fireRedKnightAxes()
+        }
+    }
+
+    /// Stage 5 boss (`calcId == 55`): two spinning axes (`32`) dropped straight down at 100 px/s, one past each side
+    /// of its body.
+    private func fireRedKnightAxes() {
+        let y = boss.y + Self.tileSizeF
+        for x in [boss.x - Self.tileSizeF, boss.x - Self.tileSizeF + Self.tileSizeF * 6.0] {
+            spawnEnemyShot(weaponId: 32, x: x, y: y, speedX: 0, speedY: 100, angleDeg: 180)
         }
     }
 
@@ -335,8 +393,8 @@ extension StageScene {
     func hitBoss() -> Bool {
         guard boss.status == .active else { return false }
 
-        if definition.bossKind == .wingedDemon && boss.isShielded {
-            // Folded wings deflect the shot (`BossSystem::hitBoss` case 3)
+        if (definition.bossKind == .wingedDemon || definition.bossKind == .redKnight) && boss.isShielded {
+            // Folded wings / a closed helmet deflect the shot (`BossSystem::hitBoss` cases 3 and 5)
             RetroAudioSynthesizer.shared.playSfx(.bossShield)
             return true
         }
@@ -494,15 +552,17 @@ extension StageScene {
         }
     }
 
-    /// Closes the screen toward its centre (`ObjectSystem::fadeMap`): each animation tick the window shrinks
-    /// 2 px vertically and 3.2 px horizontally per side, holds briefly at its smallest, then the stage ends.
+    /// Closes the screen toward its centre (`ObjectSystem::fadeMap`) until it is fully black, holds the black
+    /// screen for a moment, then the stage ends. The reference stops at a 64×56 window to print a message in it;
+    /// with no message here that left the transition looking unfinished, so the window closes all the way
+    /// (44 animation ticks ≈ 2.2 s, keeping the reference's 2 px/tick vertical rate).
     func updateStageClearWipe() {
         boss.wipeStep += 1
-        let closingSteps = 30
-        let holdSteps = 10
-        let step = CGFloat(min(boss.wipeStep, closingSteps))
-        let insetY = 2.0 * step
-        let insetX = 3.2 * step
+        let closingSteps = 44
+        let holdSteps = 6
+        let progress = CGFloat(min(boss.wipeStep, closingSteps)) / CGFloat(closingSteps)
+        let insetX = Self.msxWidth / 2.0 * progress
+        let insetY = Self.msxHeight / 2.0 * progress
         showExitWindow(
             left: insetX,
             top: insetY,
@@ -511,7 +571,6 @@ extension StageScene {
         )
 
         if boss.wipeStep >= closingSteps + holdSteps {
-            showExitWindow(left: Self.msxWidth / 2.0, top: Self.msxHeight / 2.0, width: 0, height: 0)
             playerState = .stageCleared
             gameState?.triggerStageClear(weapon: playerWeapon, speedLevel: playerSpeedLevel)
         }

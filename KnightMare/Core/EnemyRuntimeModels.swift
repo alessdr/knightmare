@@ -176,6 +176,8 @@ final class StageBossRuntime {
     /// Stage 3 boss: damage phase (`2...4`, picks the eye colour) and whether the folded wings block shots.
     var phase: Int = 2
     var isShielded: Bool = false
+    /// Stage 5 boss: remaining dash (`body->gpr3`): its sign is the direction, it decays by 1 per tick toward 0.
+    var dashVelocity: CGFloat = 0
 
     var node: SKSpriteNode?
 
@@ -189,6 +191,7 @@ final class StageBossRuntime {
         shadowFixedY = nil
         phase = 2
         isShielded = false
+        dashVelocity = 0
         status = .notSpawned
         x = 108
         y = -24

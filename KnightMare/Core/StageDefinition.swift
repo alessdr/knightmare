@@ -8,6 +8,7 @@ struct StageDefinition: Equatable {
         case scytheReaper // Stage 2 (Lissajous movement, orbiting scythe shot `33`)
         case wingedDemon // Stage 3 (wing shield cycle, 7-way fan shot `28`)
         case cyclops // Stage 4 (damage skins, fireballs that land and burn at Popolon's height)
+        case redKnight // Stage 5 (dashes, helmet that opens and closes, twin falling axes `32`)
     }
 
     let number: Int
@@ -92,7 +93,22 @@ struct StageDefinition: Equatable {
         enemyFireMaxRow: StageMapData.mapRows
     )
 
-    static let all: [StageDefinition] = [.stage1, .stage2, .stage3, .stage4]
+    static let stage5 = StageDefinition(
+        number: 5,
+        title: "CASTLE HALLS",
+        mapAssetName: "stage5_map",
+        tilesetOffsetPx: 96,
+        bossBaseLife: 40,
+        shootChance: [0.4, 0.6, 0.8],
+        // Odd stages share the Stage 1 theme (GDD §2.1)
+        stageMusic: .stage1,
+        bossMusic: .boss1,
+        bossKind: .redKnight,
+        clearMessage: "THE HALLS FALL SILENT",
+        enemyFireMaxRow: StageMapData.mapRows
+    )
+
+    static let all: [StageDefinition] = [.stage1, .stage2, .stage3, .stage4, .stage5]
 
     /// Definition for a 1-based stage number, falling back to the last implemented stage.
     static func forStage(_ number: Int) -> StageDefinition {

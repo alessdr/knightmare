@@ -5,7 +5,7 @@ import AppKit
 import UIKit
 #endif
 
-/// Loads and decodes the binary `stage1.map` (`238` rows × `32` columns of 16-bit big-endian cells),
+/// Loads and decodes a binary `stageN.map` (`238` rows × `32` columns of 16-bit big-endian cells),
 /// matching `MapData.cpp`, `MapData.h`, and `MapSystem.cpp` from `knightmare-raylib`.
 ///
 /// Binary layout (16-bit big-endian per tile):
@@ -13,7 +13,7 @@ import UIKit
 /// - bit  7:     `isSolid` (`(raw & 0x80) != 0`)
 /// - bits 8–12:  `objectId` (`0...31`, `(raw >> 8) & 0x1F`)
 /// - bits 13–15: `objectExtra` (`0...7`, `(raw >> 13) & 0x7`)
-final class Stage1MapData {
+final class StageMapData {
     static let mapCols = 32
     static let mapRows = 238
     static let mapCols0 = 31
@@ -55,13 +55,16 @@ final class Stage1MapData {
 
     private(set) var cells: [[Cell]]
 
-    init() {
+    let assetName: String
+
+    init(assetName: String = StageDefinition.stage1.mapAssetName) {
+        self.assetName = assetName
         var loadedCells = Array(
             repeating: Array(repeating: Cell(raw: 0), count: Self.mapCols),
             count: Self.mapRows
         )
 
-        if let data = Self.loadMapBinary() {
+        if let data = Self.loadMapBinary(assetName: assetName) {
             var offset = 0
             for r in 0..<Self.mapRows {
                 for c in 0..<Self.mapCols {
@@ -125,17 +128,13 @@ final class Stage1MapData {
         setSolid(row: row + 1, col: col + 1, solid: true)
     }
 
-    private static func loadMapBinary() -> Data? {
-        #if os(macOS)
-        if let asset = NSDataAsset(name: "stage1_map") {
+    /// Loads `assetName` (e.g. `stage2_map`) from the asset catalog, falling back to a bundled `stage2.map`.
+    private static func loadMapBinary(assetName: String) -> Data? {
+        if let asset = NSDataAsset(name: assetName) {
             return asset.data
         }
-        #else
-        if let asset = NSDataAsset(name: "stage1_map") {
-            return asset.data
-        }
-        #endif
-        if let url = Bundle.main.url(forResource: "stage1", withExtension: "map"),
+        let resourceName = assetName.replacingOccurrences(of: "_map", with: "")
+        if let url = Bundle.main.url(forResource: resourceName, withExtension: "map"),
            let data = try? Data(contentsOf: url) {
             return data
         }

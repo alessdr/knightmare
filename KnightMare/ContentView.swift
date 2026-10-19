@@ -20,12 +20,13 @@ struct ContentView: View {
                 StageIntroView(gameState: gameState)
                     .transition(.opacity)
 
-            case .playingStage1:
-                Stage1GameplayView(gameState: gameState)
+            case .playingStage:
+                StageGameplayView(gameState: gameState)
+                    .id(gameState.currentStage)
                     .transition(.opacity)
 
-            case .stage1Clear:
-                Stage1ClearView(gameState: gameState)
+            case .stageClear:
+                StageClearView(gameState: gameState)
                     .transition(.opacity)
 
             case .gameOver:

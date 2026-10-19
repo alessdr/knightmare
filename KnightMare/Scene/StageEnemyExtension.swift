@@ -2,7 +2,7 @@ import SpriteKit
 
 /// Marco 5: Enemy Waves (`1...16`), Movement Patterns, Active Aiming, Parting Shots,
 /// Multi-Hit Enemies (Knight, Skeleton, Cloud/Tornado), and Last Unit Wave Bonus.
-extension Stage1Scene {
+extension StageScene {
     // MARK: - Wave Queue & Enemy Spawning (`ObjectSystem::spawnObject` & `ActionQueueSystem`)
 
     func processSpawnQueue() {
@@ -71,7 +71,7 @@ extension Stage1Scene {
         }
 
         var spawnX = x
-        let spawnY = y
+        var spawnY = y
         var gpr1 = data.gpr1
         var gpr2 = data.gpr2
         var gpr3 = data.gpr3
@@ -87,24 +87,27 @@ extension Stage1Scene {
         case 4: // Knight
             spawnSpeedMs = 500
             gpr3 = 90.0 * ((spawnX > Self.msxWidth / 2.0) ? -1.0 : 1.0)
-        case 5: // Cloud / Tornado
-            if objCfg == 1 {
-                gpr2 = atan2(playerX - spawnX, spawnY - playerY) * 180.0 / .pi
-                gpr3 = 250.0
-                RetroAudioSynthesizer.shared.playSfx(.bossHit)
-            }
-        case 6: // Blue demon
+        case 5: // Cloud: enters from the nearest side edge at `y = 32`, `gpr3` = horizontal direction
+            gpr3 = (spawnX < Self.msxWidth / 2.0) ? -1.0 : 1.0
+            spawnX = (gpr3 < 0) ? 0 : Self.msxWidth - Self.tileSizeX2
+            spawnY = Self.tileSizeX4
+        case 6: // Blue demon (`gpr2` = horizontal direction, chosen once Popolon is close)
             spawnSpeedMs = 400
-            gpr2 = (spawnX > Self.msxWidth / 2.0) ? -120.0 : 120.0
-        case 7: // Skeleton
-            if objCfg > 0 {
-                // Split bone half: store remaining HP in `aux1` and mark `gpr1 = 0` while split
-                gpr1 = 0
-                gpr2 = (objCfg == 1) ? -90.0 : 90.0
-                gpr3 = (objCfg == 1) ? -1.0 : 1.0
+        case 7: // Skeleton (`objCfg` 1/2 = the two split pieces, flagged with `gpr2` = 2/3)
+            if objCfg == 1 {
+                gpr2 = 2
+            } else if objCfg == 2 {
+                gpr2 = 3
+            } else if spawnX < Self.msxWidth / 2.0 {
+                spawnX = Self.tileSizeX4
+                gpr2 = 1
+            } else {
+                spawnX = Self.msxWidth - Self.tileSizeF * 6.0
+                gpr2 = -1
             }
-        case 8: // Black Demon disguised as Cloud
-            break
+        case 8, 12: // Black Demon disguised as Cloud & Yellow thing: drift sideways toward Popolon
+            let aimDeg = min(20.0, atan2(abs(spawnX - playerX), abs(spawnY - playerY)) * 180.0 / .pi)
+            gpr2 = data.speedX * ((spawnX > playerX) ? -1.0 : 1.0) * sin(aimDeg * .pi / 180.0)
         case 9: // Death ghost
             spawnSpeedMs = 300
         case 10: // Zombie
@@ -119,16 +122,18 @@ extension Stage1Scene {
             spawnSpeedMs = 400
             gpr2 = (spawnX > Self.msxWidth / 2.0) ? -1.0 : 1.0
             gpr3 = spawnX
-        case 12: // Yellow bouncy thing
-            spawnX = min(Self.msxWidth - Self.tileSizeF * 6.0, max(Self.tileSizeX4, playerX))
-            gpr2 = (spawnX > Self.msxWidth / 2.0) ? -25.0 : 25.0
-            gpr3 = 2
         case 13: // Red diving thing
             spawnSpeedMs = 300
             gpr2 = (spawnX > Self.msxWidth / 2.0) ? -90.0 : 90.0
-        case 14: // Reverse Bat
+        case 14: // Reverse Bat: rises from near the bottom, sweeping in from its side (`gpr3`)
             spawnSpeedMs = 1000
-            if spawnX > Self.msxWidth / 2.0 { gpr2 *= -1.0 }
+            spawnY = Self.msxHeight - Self.tileSizeX4
+            if spawnX < Self.msxWidth / 2.0 {
+                gpr2 += 180
+                gpr3 = -1
+            } else {
+                gpr3 = 1
+            }
         case 16: // Red Death ghost
             gpr2 = (spawnX > Self.msxWidth / 2.0) ? -135.0 : 135.0
         default:
@@ -147,14 +152,18 @@ extension Stage1Scene {
         enemy.gpr2 = gpr2
         enemy.gpr3 = gpr3
         applyEnemyFrameTexture(enemy)
+        if id == 7 && (objCfg == 1 || objCfg == 2) {
+            applyEnemyFrameOffset(enemy, offsetX: objCfg == 1 ? 32 : 48, baseTileId: 7)
+        }
         enemies.append(enemy)
 
         if enqueueRemaining && objCfg > 0 && spawnSpeedMs > 0 {
+            // Queue the rest of the wave at the map position; each spawn re-applies its own placement rules
             let queued = QueuedSpawnAction(
                 execCount: objCfg,
                 objId: id,
-                x: spawnX,
-                y: spawnY,
+                x: x,
+                y: y,
                 objCfg: 0,
                 delayMs: spawnSpeedMs,
                 nextExecMs: clockMs + spawnSpeedMs,
@@ -203,11 +212,18 @@ extension Stage1Scene {
                     speedY = 0
                 }
 
-            case 2, 14: // Bat & Reverse Bat
+            case 2: // Bat
                 speedX *= sin(o.gpr2 * .pi / 180.0)
                 if o.y > 40 {
                     o.gpr2 += 40.0 * dt * (o.gpr2 > 0 ? 1.0 : -1.0)
                 }
+
+            case 14: // Reverse Bat: wide cosine sweep anchored on its side while climbing
+                let reach = Self.msxWidth / 2.0 + Self.tileSizeF * 6.0
+                o.x = (o.gpr3 > 0 ? Self.msxWidth : 0) + reach * cos(o.gpr2 * .pi / 180.0)
+                o.gpr2 += data.speedX * dt
+                o.renderOffsetY = (animTick % 6 < 3) ? CGFloat(MSXObjectTiles.objTiles[14]?.h ?? 11) / 2.0 : 0
+                speedX = 0
 
             case 3: // Bat wave
                 speedX *= sin(o.gpr2 * .pi / 180.0) * o.gpr3
@@ -228,72 +244,117 @@ extension Stage1Scene {
                     }
                 }
 
-            case 5, 8: // Cloud / Tornado (`5`) & Disguised Black Demon (`8`)
-                if o.id == 5 && o.gpr3 > 0 {
-                    speedX = o.gpr3 * sin(o.gpr2 * .pi / 180.0)
-                    speedY = -o.gpr3 * cos(o.gpr2 * .pi / 180.0)
+            case 5: // Cloud: bobs and zig-zags across the top half; once deflected by a shot (`gpr1 = 1`) it flies off
+                if o.gpr1 == 1 {
+                    speedX = o.gpr2
+                    speedY = o.gpr3
                 } else {
-                    o.renderOffsetX = floor(-16.0 * sin(o.gpr2 * .pi / 180.0))
-                    o.renderOffsetY = floor(-16.0 * cos(o.gpr2 * .pi / 180.0))
-                    o.gpr2 += speedY * dt
-                    speedY = speedX
-                    speedX = 0
-
-                    if o.id == 8 && (playerY - o.y < 60) {
-                        if o.gpr3 == 0 {
-                            o.gpr3 = 200
-                            applyEnemyBaseTile(o, tileId: 8)
-                            fireEnemyProjectile(from: o)
-                        }
-                        if o.gpr3 > 1 {
-                            o.gpr3 -= 60.0 * dt
-                            if o.gpr3 <= 1 {
-                                o.gpr3 = 1
-                                applyEnemyBaseTile(o, tileId: 5)
-                            }
-                        }
-                    }
-                }
-
-            case 6: // Blue demon
-                speedX *= sin(o.gpr2 * .pi / 180.0)
-                speedY *= -cos(o.gpr2 * .pi / 180.0)
-                let minY = (o.gpr3 == 0) ? 160.0 : 80.0
-                if o.y > minY && abs(o.gpr2) > 45.0 {
-                    o.gpr2 += (o.gpr2 > 0 ? -90.0 : 90.0) * dt
-                    o.gpr3 = 1
-                } else if o.y < 70 && abs(o.gpr2) < 135.0 {
-                    o.gpr2 += (o.gpr2 > 0 ? 90.0 : -90.0) * dt
-                }
-
-            case 7: // Skeleton
-                speedX *= sin(o.gpr2 * .pi / 180.0)
-                speedY *= -cos(o.gpr2 * .pi / 180.0)
-                if o.gpr3 != 0 && abs(o.gpr2) > 0 {
-                    o.gpr2 = max(0, abs(o.gpr2) - 40.0 * dt) * o.gpr3
-                    if o.gpr2 == 0 {
-                        if o.gpr3 < 0 {
-                            o.gpr1 = max(1, CGFloat(o.aux1))
-                            o.gpr3 = 0
-                            applyEnemyBaseTile(o, tileId: 7)
-                            RetroAudioSynthesizer.shared.playSfx(.skeletonRestored)
-                        } else {
+                    if o.y > Self.msxHeight / 2.0 + Self.tileSizeX2 {
+                        if o.x <= 0 || o.x >= Self.msxWidth - Self.tileSizeX2 {
+                            recordEnemyEscaped(o)
                             o.isFree = true
+                            scheduleBossMinionReplacement()
+                            continue
+                        }
+                    } else if o.gpr3 < 0 && o.x <= Self.tileSizeX2 {
+                        o.gpr3 = 1
+                    } else if o.gpr3 > 0 && o.x >= Self.msxWidth - Self.tileSizeX4 {
+                        o.gpr3 = -1
+                    }
+                    speedX = data.speedX * o.gpr3
+                    speedY = 0
+                    if o.gpr2 < 0 {
+                        o.gpr2 += 10.0 * dt
+                        speedY = 10.0
+                    } else {
+                        // Vertical bob: swap the previous sine offset for the next one
+                        o.y -= Self.tileSizeF / 2.0 * sin(o.gpr2 * .pi / 180.0)
+                        o.gpr2 += 1
+                        o.y += Self.tileSizeF / 2.0 * sin(o.gpr2 * .pi / 180.0)
+                        if o.gpr2.truncatingRemainder(dividingBy: data.speedY) == 0 {
+                            o.gpr2 = -Self.tileSizeF - Self.tileSizeF / 2.0
                         }
                     }
+                }
+
+            case 8: // Black Demon: falls disguised as a cloud, reveals itself near Popolon, fires a spread, then retreats
+                o.renderOffsetY = 0
+                if o.gpr3 == 0 && playerY - o.y < 60 {
+                    o.gpr3 = 1
+                    applyEnemyBaseTile(o, tileId: 8)
+                }
+                if o.gpr3 <= 0 {
+                    speedX = o.gpr2
+                    speedY = data.speedY * (o.gpr3 < 0 ? -1.0 : 1.0)
                 } else {
-                    let nextX = o.x + speedX * dt
-                    let nextY = o.y + speedY * dt
-                    if mapCollideForEnemy(px: nextX, py: nextY) {
-                        o.gpr2 = (o.gpr2 != 0) ? 0 : 90.0 * ((o.x > Self.msxWidth / 2.0) ? -1.0 : 1.0)
-                    } else if abs(o.x - playerX) > 8.0 {
-                        let candidateAngle: CGFloat = (playerX > o.x) ? 90.0 : -90.0
-                        let stepX = sin(candidateAngle * .pi / 180.0) * speedX * dt
-                        if !mapCollideForEnemy(px: o.x + stepX, py: o.y) {
-                            o.gpr2 = candidateAngle
+                    speedX = 0
+                    speedY = 0
+                    o.renderOffsetY = Self.tileSizeF / 2.0
+                    o.gpr3 += dt
+                    if o.gpr3 > 2 {
+                        o.gpr3 = -1
+                        fireEnemyProjectile(from: o)
+                        applyEnemyBaseTile(o, tileId: 5)
+                        o.flipX = false
+                    }
+                }
+
+            case 6: // Blue demon: falls straight, then commits to a horizontal direction once Popolon is close
+                if o.gpr2 == 0 && playerY - o.y < 55 {
+                    o.gpr2 = (o.x > playerX) ? -1.0 : 1.0
+                }
+                speedX *= o.gpr2
+
+            case 7: // Skeleton (`gpr2` = ±1 walking direction, 2/3 = split pieces; `gpr3` = split timer)
+                if o.gpr2 > 1 {
+                    // Split piece: flies apart, then snaps back together before vanishing
+                    o.gpr3 += dt
+                    var offsetY = -Self.tileSizeF
+                    let spread: CGFloat
+                    if o.gpr3 > 3.2 {
+                        o.isFree = true
+                        continue
+                    } else if o.gpr3 > 3.0 {
+                        spread = Self.tileSizeF
+                    } else if o.gpr3 > 2.8 {
+                        spread = Self.tileSizeX2
+                    } else if o.gpr3 > 2.6 {
+                        if o.gpr1 == 10 {
+                            RetroAudioSynthesizer.shared.playSfx(.skeletonRestored)
+                            o.gpr1 = 11
                         }
+                        spread = Self.tileSizeF * 3.0
+                    } else if o.gpr3 > 0.6 {
+                        spread = Self.tileSizeX4
+                        offsetY = 0
+                    } else if o.gpr3 > 0.4 {
+                        spread = Self.tileSizeF * 3.0
+                    } else if o.gpr3 > 0.2 {
+                        spread = Self.tileSizeX2
                     } else {
-                        o.gpr2 = 0
+                        spread = Self.tileSizeF
+                        if o.gpr1 != 10 { o.gpr1 = 10 }
+                    }
+                    o.renderOffsetX = spread * (o.gpr2 == 2 ? -1.0 : 1.0)
+                    o.renderOffsetY = offsetY
+                    speedX = 0
+                    speedY = 0
+                } else if o.gpr3 == 0 {
+                    // Walking: zig-zags between the edges, faster as it loses life
+                    speedX = (data.speedX + data.speedX / 3.0 * (data.gpr1 - o.gpr1 + 1)) * o.gpr2
+                    if o.x < Self.tileSizeX4 {
+                        o.gpr2 = 1
+                    } else if o.x > Self.msxWidth - Self.tileSizeF * 6.0 {
+                        o.gpr2 = -1
+                    }
+                } else {
+                    // Broken: stays hidden while its pieces play out, then resumes walking
+                    speedX = 0
+                    speedY = 0
+                    o.gpr3 += dt
+                    if o.gpr3 > 4.2 {
+                        o.gpr3 = 0
+                        o.node.isHidden = false
                     }
                 }
 
@@ -329,20 +390,8 @@ extension Stage1Scene {
                 speedX *= sin(a * .pi / 180.0) * o.gpr2
                 o.flipX = (speedX > 0)
 
-            case 12: // Yellow thing
-                speedX *= sin(o.gpr2 * .pi / 180.0)
-                speedY *= cos(o.gpr2 * .pi / 180.0)
-                if o.gpr3 > 0 {
-                    let bounceX = (o.x <= 8 && o.gpr2 < 0) || (o.x >= Self.msxWidth - 24 && o.gpr2 > 0)
-                    let bounceY = (o.y <= 8 && abs(o.gpr2) > 90) || (o.y >= Self.msxHeight - 8 && abs(o.gpr2) < 90)
-                    if bounceX {
-                        o.gpr2 *= -1
-                        o.gpr3 -= 1
-                    } else if bounceY {
-                        o.gpr2 = 180.0 - o.gpr2
-                        o.gpr3 -= 1
-                    }
-                }
+            case 12: // Yellow thing: fast dive with the sideways drift picked at spawn
+                speedX = o.gpr2
 
             case 13: // Red thing
                 speedX *= cos(o.gpr2 * .pi / 180.0)
@@ -390,7 +439,8 @@ extension Stage1Scene {
             o.y += speedY * dt
 
             // Parting Shot ("Tiro de Despedida") when crossing the bottom border (`y >= 164`)
-            if !o.didPartingShot && o.y >= 164 && o.y <= Self.msxHeight && o.id < 20 && o.id != 1 && o.id != 5 && o.id != 8 && o.id != 12 {
+            let isSkeletonPiece = o.id == 7 && o.gpr2 > 1
+            if !o.didPartingShot && o.y >= 164 && o.y <= Self.msxHeight && o.id < 20 && o.id != 1 && o.id != 5 && o.id != 8 && o.id != 12 && !isSkeletonPiece {
                 o.didPartingShot = true
                 if CGFloat.random(in: 0...1) < 0.45 {
                     firePartingShot(from: o)
@@ -402,6 +452,9 @@ extension Stage1Scene {
             if o.y < 0 || o.y > maxY || o.x < -Self.tileSizeX2 || o.x > Self.msxWidth + Self.tileSizeF {
                 recordEnemyEscaped(o)
                 o.isFree = true
+                if o.id == 5 {
+                    scheduleBossMinionReplacement()
+                }
             }
         }
     }
@@ -410,6 +463,8 @@ extension Stage1Scene {
 
     func animateEnemies() {
         let twoFrames = (animTick % 2 == 0) ? 16 : 0
+        // Reference cadence (`animateObjects` default): alternate frames every 3 animation ticks
+        let slowFrames = (animTick % 6 > 2) ? 16 : 0
         for o in enemies where !o.isFree {
             // While screen is frozen (`freezeTimer >= 0`), living enemies stay frozen on their frame,
             // while fire explosions (`o.id == 34`) and hit flashes (`o.id == 28`) complete normally!
@@ -417,7 +472,9 @@ extension Stage1Scene {
                 continue
             }
             switch o.id {
-            case 1, 2, 3, 6, 9, 10, 14, 16:
+            case 6, 14:
+                applyEnemyFrameOffset(o, offsetX: slowFrames, baseTileId: o.id)
+            case 1, 2, 3, 9, 10, 16:
                 if o.id == 10 && o.gpr3 != 0 {
                     applyEnemyFrameOffset(o, offsetX: 32 + twoFrames, baseTileId: 10)
                 } else {
@@ -426,29 +483,21 @@ extension Stage1Scene {
             case 4: // Knight
                 let offset = (o.gpr1 == 3) ? twoFrames : (16 * (5 - Int(o.gpr1)))
                 applyEnemyFrameOffset(o, offsetX: offset, baseTileId: 4)
-            case 5, 8: // Cloud / Tornado / Black Demon
-                if o.id == 5 || o.gpr3 <= 1 {
-                    let offset = ((animTick % 3) * 16) + (o.id == 5 && o.gpr3 > 0 ? 48 : 0)
-                    applyEnemyFrameOffset(o, offsetX: offset, baseTileId: 5)
-                }
-            case 7: // Skeleton
-                let offset: Int
-                if o.gpr1 == 3 {
-                    offset = twoFrames
-                } else if o.gpr1 == 2 {
-                    offset = 32
+            case 5, 8: // Cloud, and the Black Demon while disguised; the revealed demon just flips
+                if o.id == 5 || o.gpr3 <= 0 {
+                    applyEnemyFrameOffset(o, offsetX: slowFrames, baseTileId: 5)
                 } else {
-                    offset = 48
+                    o.flipX = (animTick % 6 > 2)
                 }
-                applyEnemyFrameOffset(o, offsetX: offset, baseTileId: 7)
-                if o.gpr1 < 3 {
-                    o.flipX = (animTick % 2 == 0)
-                } else {
-                    o.flipX = false
+            case 7: // Skeleton (split pieces keep the sprite chosen at spawn)
+                if o.gpr2 <= 1 {
+                    applyEnemyFrameOffset(o, offsetX: slowFrames, baseTileId: 7)
                 }
             case 11: // Ghost
                 break
-            case 12, 13:
+            case 12: // Yellow thing: static sprite
+                break
+            case 13:
                 o.flipX = (animTick % 2 == 0)
             case 15: // Sorcerer
                 if o.gpr2 == 0 || o.gpr2 == 1 {
@@ -483,20 +532,24 @@ extension Stage1Scene {
         for o in enemies where !o.isFree {
             guard o.id < 20 && o.id != 8 else { continue }
             guard o.y >= 16 && o.y <= maxShootY else { continue }
-            if CGFloat.random(in: 0...1) < 0.5 {
+            if Double.random(in: 0...1) < definition.shootChance(for: gameState?.difficulty ?? .normal) {
                 fireEnemyProjectile(from: o)
             }
         }
     }
 
     func fireEnemyProjectile(from o: EnemyObject) {
-        let speed: CGFloat = 120.0
+        var speed: CGFloat = 120.0
         var shotsCount = 0
         var weaponId = 23
         var angle: CGFloat = 0
 
         switch o.id {
-        case 2, 3, 6, 11, 14:
+        case 6, 12, 14: // Dot bullet aimed at Popolon (`enemyFire` default, speed 70)
+            weaponId = 23
+            speed = 70
+            angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
+        case 2, 3, 11:
             weaponId = 23 // Dot bullet
             angle = o.velocityAngleDeg()
             if angle == 0 {
@@ -508,15 +561,16 @@ extension Stage1Scene {
             let mod90 = Int(abs(angle)) % 90 == 0
             let mod180 = Int(abs(angle)) % 180 == 0
             weaponId = mod90 ? (mod180 ? 29 : 30) : 31
-        case 7: // Skeleton spinning bone (`25`)
-            guard o.gpr1 == 3 else { return }
+        case 7: // Skeleton spinning bone (`25`), only while walking intact
+            guard o.gpr3 == 0 && o.gpr2 <= 1 else { return }
             weaponId = 25
-            angle = o.velocityAngleDeg()
-            if angle == 0 { angle = 180 }
-        case 8: // Black Demon 4-way spread (`24`)
+            speed = 70
+            angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
+        case 8: // Black Demon 4-way spread (`24`) at ±10° / ±30° around Popolon
             weaponId = 24
+            speed = 91
             shotsCount = 3
-            angle = 240.0
+            angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y) + 30.0
         case 9, 16: // Death ghost energy ray (`24`)
             weaponId = 24
             angle = o.velocityAngleDeg()
@@ -546,7 +600,7 @@ extension Stage1Scene {
             )
 
             if o.id == 8 {
-                angle -= 35.0
+                angle -= 20.0
             } else if o.id == 15 {
                 angle += 45.0
             }
@@ -578,6 +632,7 @@ extension Stage1Scene {
         return a
     }
 
+    @discardableResult
     func spawnEnemyShot(
         weaponId: Int,
         x: CGFloat,
@@ -585,8 +640,8 @@ extension Stage1Scene {
         speedX: CGFloat,
         speedY: CGFloat,
         angleDeg: CGFloat
-    ) {
-        guard let rect = MSXObjectTiles.objTiles[weaponId] else { return }
+    ) -> EnemyShot? {
+        guard let rect = MSXObjectTiles.objTiles[weaponId] else { return nil }
         let node = SKSpriteNode(
             texture: shotTextureCache[weaponId],
             size: CGSize(width: rect.w, height: rect.h)
@@ -618,13 +673,26 @@ extension Stage1Scene {
         }
 
         enemyShots.append(shot)
+        return shot
     }
 
     func moveEnemyShots() {
         let dt = CGFloat(Self.tickInterval)
         for shot in enemyShots where !shot.isFree {
-            shot.x += shot.speedX * dt
-            shot.y += shot.speedY * dt
+            if let center = shot.orbitCenter {
+                // Scythe (`33`): two full turns around a point below the boss, then it vanishes
+                shot.orbitAngle += shot.orbitStep
+                if abs(shot.orbitAngle) > 720 {
+                    shot.isFree = true
+                    continue
+                }
+                let radians = shot.orbitAngle * .pi / 180.0
+                shot.x = center.x + Self.tileSizeF * 7.0 * sin(radians)
+                shot.y = center.y + Self.tileSizeF * 7.0 * -cos(radians)
+            } else {
+                shot.x += shot.speedX * dt
+                shot.y += shot.speedY * dt
+            }
             if shot.y < 0 || shot.y > Self.msxHeight + Self.tileSizeX2 || shot.x < 0 || shot.x > Self.msxWidth {
                 shot.isFree = true
             }
@@ -646,7 +714,11 @@ extension Stage1Scene {
                     shot.node.zRotation = -CGFloat(newRot) * (.pi / 2.0)
                 }
                 shot.gpr1 += 1
-            } else if shot.weaponId == 32 || shot.weaponId == 33 {
+            } else if shot.weaponId == 33 {
+                // Scythe spins through 4 frames laid out side by side in `objects.png`
+                let frameX = 48 + 16 * (animTick % 4)
+                shot.node.texture = SpriteSheetManager.shared.texture(from: .objects, x: frameX, y: 120, width: 16, height: 16)
+            } else if shot.weaponId == 32 {
                 shot.rotQuarterTurns = shot.gpr1 % 4
                 shot.node.zRotation = -CGFloat(shot.rotQuarterTurns) * (.pi / 2.0)
                 shot.gpr1 += 1
@@ -657,7 +729,40 @@ extension Stage1Scene {
     // MARK: - Enemy Collisions, Splitting & Destruction (`CollisionSystem::hitObject`)
 
     func hitEnemyObject(_ o: EnemyObject, instantKill: Bool) -> Bool {
-        if o.id == 7 || o.id == 10 {
+        if o.id == 5 {
+            if instantKill {
+                // Burns away without awarding points (`startFireAnimation` + `destroyObject`)
+                killEnemyObject(o, awardPoints: false)
+            } else {
+                // Shots can't destroy a cloud: they knock it away at attack speed along its heading
+                let heading = o.velocityAngleDeg() * .pi / 180.0
+                o.gpr1 = 1
+                o.gpr2 = 250.0 * sin(heading) + 0.01
+                o.gpr3 = 250.0 * -cos(heading)
+            }
+            return true
+        }
+
+        if o.id == 7 {
+            // Already broken or a flying piece: shots pass through, even while invincible
+            if o.gpr3 > 0 || o.gpr2 > 1 {
+                return false
+            }
+            if o.gpr1 > 1 && !instantKill {
+                // Breaks into two pieces that fly apart and reassemble; the body hides meanwhile
+                o.gpr1 -= 1
+                o.gpr3 = 1
+                o.node.isHidden = true
+                spawnEnemyObject(id: 7, x: o.x, y: o.y, objCfg: 1, waveGroupId: 0, enqueueRemaining: false)
+                spawnEnemyObject(id: 7, x: o.x, y: o.y, objCfg: 2, waveGroupId: 0, enqueueRemaining: false)
+                RetroAudioSynthesizer.shared.playSfx(.split)
+                return true
+            }
+            killEnemyObject(o)
+            return true
+        }
+
+        if o.id == 10 {
             if instantKill {
                 killEnemyObject(o)
                 return true
@@ -689,10 +794,12 @@ extension Stage1Scene {
         return true
     }
 
-    func killEnemyObject(_ o: EnemyObject, playSfx: Bool = true) {
+    func killEnemyObject(_ o: EnemyObject, playSfx: Bool = true, awardPoints: Bool = true) {
         let originalId = o.id
-        let points = MSXObjectTiles.objPoints[originalId] ?? 100
-        gameState?.incrementScore(points)
+        let isSkeletonPiece = originalId == 7 && o.gpr2 > 1
+        if awardPoints && !isSkeletonPiece {
+            gameState?.incrementScore(MSXObjectTiles.objPoints[originalId] ?? 100)
+        }
         recordEnemyKilled(o)
         if originalId == 5 && boss.status == .active {
             scheduleBossMinionReplacement()
@@ -707,6 +814,7 @@ extension Stage1Scene {
         o.renderOffsetY = 0
         o.flipX = false
         o.flipY = false
+        o.node.isHidden = false // a broken skeleton may be hidden while its pieces fly
         o.shadowNode?.removeFromParent()
         applyEnemyBaseTile(o, tileId: 34)
         if playSfx {
@@ -740,7 +848,7 @@ extension Stage1Scene {
     }
 
     func applyEnemyFrameTexture(_ o: EnemyObject) {
-        let visualId = (o.id == 8 && o.gpr3 <= 1) ? 5 : o.id
+        let visualId = (o.id == 8 && o.gpr3 <= 0) ? 5 : o.id
         applyEnemyBaseTile(o, tileId: visualId)
     }
 
@@ -760,7 +868,7 @@ extension Stage1Scene {
     }
 
     func enemyBox(_ o: EnemyObject) -> CGRect {
-        let visualId = (o.id == 8 && o.gpr3 <= 1) ? 5 : o.id
+        let visualId = (o.id == 8 && o.gpr3 <= 0) ? 5 : o.id
         let rect = MSXObjectTiles.objTiles[visualId] ?? MSXObjectTiles.TileRect(x: 0, y: 0, w: 16, h: 16)
         let drawX = o.x + o.renderOffsetX
         let drawY = o.y + o.renderOffsetY

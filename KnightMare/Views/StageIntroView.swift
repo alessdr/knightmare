@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Displays the classic MSX "STAGE 01" opening iris/window reveal and HUD bar,
-/// transitioning automatically into `Stage1GameplayView`.
+/// transitioning automatically into `StageGameplayView`.
 struct StageIntroView: View {
     let gameState: GameStateManager
 
@@ -14,7 +14,9 @@ struct StageIntroView: View {
 
             GeometryReader { geo in
                 ZStack {
-                    TiledBackdropView(stageOffsetRows: 0)
+                    TiledBackdropView(
+                        stageOffsetRows: gameState.currentStageDefinition.tilesetOffsetPx / SpriteSheetManager.tileSize
+                    )
 
                     VStack {
                         Spacer()
@@ -32,12 +34,12 @@ struct StageIntroView: View {
 
                     VStack(spacing: 16) {
                         MSXBitmapText(
-                            text: "STAGE 01",
+                            text: String(format: "STAGE %02d", gameState.currentStage),
                             glyphSize: 22,
                             tint: Color(red: 1.0, green: 0.85, blue: 0.2)
                         )
                         MSXBitmapText(
-                            text: "MOUNT ATHOS",
+                            text: gameState.currentStageDefinition.title,
                             glyphSize: 13,
                             tint: .white
                         )
@@ -55,7 +57,7 @@ struct StageIntroView: View {
         .background(Color.black.ignoresSafeArea())
         .contentShape(Rectangle())
         .onTapGesture {
-            gameState.enterStage1Gameplay()
+            gameState.enterStageGameplay()
         }
         .task {
             let totalSteps = 22
@@ -65,7 +67,7 @@ struct StageIntroView: View {
                 revealProgress = CGFloat(step) / CGFloat(totalSteps)
             }
             if !Task.isCancelled {
-                gameState.enterStage1Gameplay()
+                gameState.enterStageGameplay()
             }
         }
         .task {

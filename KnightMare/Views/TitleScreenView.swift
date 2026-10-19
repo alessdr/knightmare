@@ -147,16 +147,20 @@ struct TitleScreenView: View {
 
                 menuRow(
                     index: 1,
-                    label: "STAGE: 01 MOUNT ATHOS"
+                    label: String(
+                        format: "STAGE: %02d %@",
+                        gameState.selectedStartStage,
+                        StageDefinition.forStage(gameState.selectedStartStage).title
+                    )
                 ) {
-                    RetroAudioSynthesizer.shared.playMenuMove()
+                    gameState.cycleStartStage(delta: 1)
                 }
 
                 menuRow(
                     index: 2,
                     label: "START GAME"
                 ) {
-                    gameState.startStage1()
+                    gameState.startNewGame()
                 }
 
                 menuRow(
@@ -350,6 +354,8 @@ struct TitleScreenView: View {
         }
         if selectedItem == 0 {
             gameState.cycleDifficulty(delta: delta)
+        } else if selectedItem == 1 {
+            gameState.cycleStartStage(delta: delta)
         }
     }
 
@@ -362,9 +368,9 @@ struct TitleScreenView: View {
         case 0:
             gameState.cycleDifficulty(delta: 1)
         case 1:
-            RetroAudioSynthesizer.shared.playMenuMove()
+            gameState.cycleStartStage(delta: 1)
         case 2:
-            gameState.startStage1()
+            gameState.startNewGame()
         case 3:
             gameState.replayPrologue()
         default:

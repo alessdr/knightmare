@@ -1,12 +1,12 @@
 import SpriteKit
 import SwiftUI
 
-/// SpriteKit scene implementing the 256×176 MSX playfield for Stage 1 (Mount Athos),
-/// including binary map scrolling (`stage1.map`), Popolon 8-directional movement,
+/// SpriteKit scene implementing the 256×176 MSX playfield for the stage described by `definition`,
+/// including binary map scrolling (`stageN.map`), Popolon 8-directional movement,
 /// solid terrain collisions, scroll-crush detection, Marco 3's Weapon/Crystal/Shield/Aura
 /// system, and Marco 4's `?` Blocks, Chess Pieces (Rook, King, Knight, Queen), and Water Bridges.
 @MainActor
-final class Stage1Scene: SKScene {
+final class StageScene: SKScene {
     // MARK: - MSX Constants (matching Constants.h)
     static let msxWidth: CGFloat = 256
     static let msxHeight: CGFloat = 176
@@ -138,8 +138,9 @@ final class Stage1Scene: SKScene {
     weak var inputController: InputController?
 
     // MARK: - Map & Scroll State
-    private var mapData = Stage1MapData()
-    var currentRow: Int = Stage1MapData.mapRows0 - Stage1MapData.screenRows // 215
+    var definition: StageDefinition = .stage1
+    private var mapData = StageMapData()
+    var currentRow: Int = StageMapData.mapRows0 - StageMapData.screenRows // 215
     var tilePx: Int = 0
     var scrollOn: Bool = true
     private var isGamePaused: Bool = false
@@ -156,7 +157,7 @@ final class Stage1Scene: SKScene {
     var playerState: PlayerState = .playing
     var playerX: CGFloat = 120
     var playerY: CGFloat = 168
-    private var playerSpeed: CGFloat = Stage1Scene.playerInitSpeed
+    private var playerSpeed: CGFloat = StageScene.playerInitSpeed
     var playerWeapon: MSXWeapon = .arrow
     var powerUpState: MSXPowerUpState = .none
     var powerUpTimer: CGFloat = -1
@@ -181,7 +182,7 @@ final class Stage1Scene: SKScene {
     let shieldSpriteNode = SKSpriteNode()
     let flashOverlayNode = SKSpriteNode(color: .white, size: CGSize(width: 256, height: 176))
 
-    private let visibleRowOffsets: [Int] = Array(-1...(Stage1Scene.screenRows + 1))
+    private let visibleRowOffsets: [Int] = Array(-1...(StageScene.screenRows + 1))
     private var tileGridNodes: [[SKSpriteNode]] = []
     private var mapTileTextureCache: [Int: SKTexture] = [:]
     var shotTextureCache: [Int: SKTexture] = [:]
@@ -201,7 +202,7 @@ final class Stage1Scene: SKScene {
     var spawnQueue: [QueuedSpawnAction] = []
     var waveTrackers: [Int: EnemyWaveTracker] = [:]
     var nextWaveGroupId: Int = 0
-    let boss = Stage1BossRuntime()
+    let boss = StageBossRuntime()
 
     // MARK: - Lifecycle
 
@@ -238,7 +239,7 @@ final class Stage1Scene: SKScene {
         let sheets = SpriteSheetManager.shared
         for id in 0..<128 {
             let tx = (id % SpriteSheetManager.tilesCols) * SpriteSheetManager.tileSize
-            let ty = (id / SpriteSheetManager.tilesCols) * SpriteSheetManager.tileSize
+            let ty = (id / SpriteSheetManager.tilesCols) * SpriteSheetManager.tileSize + definition.tilesetOffsetPx
             if let tex = sheets.texture(from: .maps, x: tx, y: ty, width: 8, height: 8) {
                 mapTileTextureCache[id] = tex
             }
@@ -258,7 +259,7 @@ final class Stage1Scene: SKScene {
 
         // `[?]` Block sprite (`t[22] = {0, 104, 16, 16}`) and Chess Pieces (`offset = 16 * b.type`)
         blockQuestionTexture = sheets.texture(from: .objects, x: 0, y: 104, width: 16, height: 16)
-        for blockType in [MSXBlockType.rook, .knight, .queen, .king, .barrier] {
+        for blockType in [MSXBlockType.rook, .knight, .queen, .king, .barrier, .collected] {
             let tx = 16 * blockType.rawValue
             if let tex = sheets.texture(from: .objects, x: tx, y: 104, width: 16, height: 16) {
                 chessPieceTextureCache[blockType] = tex
@@ -304,15 +305,21 @@ final class Stage1Scene: SKScene {
     // MARK: - Stage Initialization & Respawn
 
     func startNewStage() {
-        mapData = Stage1MapData()
-        currentRow = Stage1MapData.mapRows0 - Stage1MapData.screenRows // 215
-        playerWeapon = .arrow
-        playerSpeed = Self.playerInitSpeed
+        currentRow = StageMapData.mapRows0 - StageMapData.screenRows // 215
+        // Weapon and speed upgrades carry over from the previous stage (GDD §8)
+        playerWeapon = gameState?.carriedWeapon ?? .arrow
+        let carriedSpeedLevel = CGFloat(gameState?.carriedSpeedLevel ?? 0)
+        playerSpeed = min(Self.playerMaxSpeed, Self.playerInitSpeed + Self.playerSpeedInc * carriedSpeedLevel)
         powerUpState = .none
         powerUpTimer = -1
         freezeTimer = -1
         shieldHits = 0
         resetStageAttempt()
+    }
+
+    /// Current speed upgrade level (`0...3`), as shown on the HUD.
+    var playerSpeedLevel: Int {
+        Int(round((playerSpeed - Self.playerInitSpeed) / Self.playerSpeedInc))
     }
 
     func clearDynamicEntities() {
@@ -345,6 +352,8 @@ final class Stage1Scene: SKScene {
     }
 
     private func resetStageAttempt() {
+        // Reload a pristine map on every attempt so opened barriers and bridges reset (`Engine::initStage` → `loadMap`)
+        mapData = StageMapData(assetName: definition.mapAssetName)
         clearDynamicEntities()
         boss.reset()
         flashOverlayNode.color = .white
@@ -368,7 +377,7 @@ final class Stage1Scene: SKScene {
         playerIsMoving = false
 
         // Populate any `?` blocks already inside the initial visible screen window
-        let maxInitialRow = min(Stage1MapData.mapRows0, currentRow + Self.screenRows - 1)
+        let maxInitialRow = min(StageMapData.mapRows0, currentRow + Self.screenRows - 1)
         if currentRow <= maxInitialRow {
             for r in currentRow...maxInitialRow {
                 spawnBlocksInRow(row: r)
@@ -376,9 +385,9 @@ final class Stage1Scene: SKScene {
         }
 
         if currentRow <= 7 {
-            spawnStage1Boss()
+            spawnBoss()
             if currentRow == 0 {
-                activateStage1Boss()
+                activateBoss()
             }
         }
 
@@ -392,9 +401,9 @@ final class Stage1Scene: SKScene {
 
     private func playCurrentStageTheme() {
         if currentRow > 8 {
-            RetroAudioSynthesizer.shared.playStage1Music()
+            RetroAudioSynthesizer.shared.playStageMusic(definition.stageMusic)
         } else {
-            RetroAudioSynthesizer.shared.playBoss1Music()
+            RetroAudioSynthesizer.shared.playBossMusic(definition.bossMusic)
         }
     }
 
@@ -404,8 +413,8 @@ final class Stage1Scene: SKScene {
             return
         }
         var solid = true
-        currentRow = min(Stage1MapData.mapRows0 - Stage1MapData.screenRows, currentRow + 5)
-        while solid && currentRow < Stage1MapData.mapRows0 - Stage1MapData.screenRows {
+        currentRow = min(StageMapData.mapRows0 - StageMapData.screenRows, currentRow + 5)
+        while solid && currentRow < StageMapData.mapRows0 - StageMapData.screenRows {
             let r = currentRow + Self.playerInitRow
             let c = Self.playerInitCol
             solid = mapData.isSolid(row: r, col: c)
@@ -551,7 +560,7 @@ final class Stage1Scene: SKScene {
             animateEnemyShots()
             animatePickups()
             animateEnemies()
-            animateStage1Boss()
+            animateBoss()
             if playerState == .stageClearWipe {
                 updateStageClearWipe()
             }
@@ -560,13 +569,13 @@ final class Stage1Scene: SKScene {
         moveShots()
         moveEnemyShots()
         movePickups()
-        moveStage1Boss()
+        moveBoss()
         bossFireTick()
 
         if freezeTimer < 0 {
             moveEnemies()
             processSpawnQueue()
-            if tickCount % 250 == 0 && currentRow < 195 {
+            if tickCount % 250 == 0 && currentRow < definition.enemyFireMaxRow {
                 enemiesFire()
             }
         }
@@ -588,7 +597,7 @@ final class Stage1Scene: SKScene {
         guard scrollOn else { return }
 
         moveBlocksWithScroll()
-        scrollStage1Boss()
+        scrollBoss()
         checkScrollCollision()
         tilePx += 1
 
@@ -603,15 +612,15 @@ final class Stage1Scene: SKScene {
                 scrollOn = false
             }
             refreshMapTileTextures()
-            gameState?.stage1ProgressRows = max(0, (Stage1MapData.mapRows0 - Stage1MapData.screenRows) - currentRow)
+            gameState?.stageProgressRows = max(0, (StageMapData.mapRows0 - StageMapData.screenRows) - currentRow)
         }
     }
 
     private func spawnRowContent(row: Int) {
-        guard row >= 0 && row < Stage1MapData.mapRows else { return }
+        guard row >= 0 && row < StageMapData.mapRows else { return }
         let topOffset = CGFloat(row - currentRow) * Self.tileSizeF
 
-        for col in (0...Stage1MapData.mapCols0).reversed() {
+        for col in (0...StageMapData.mapCols0).reversed() {
             let objId = mapData.objectId(row: row, col: col)
             guard objId > 0 else { continue }
             let extra = mapData.objectExtra(row: row, col: col)
@@ -634,9 +643,9 @@ final class Stage1Scene: SKScene {
     }
 
     private func spawnBlocksInRow(row: Int) {
-        guard row >= 0 && row < Stage1MapData.mapRows else { return }
+        guard row >= 0 && row < StageMapData.mapRows else { return }
         let topOffset = CGFloat(row - currentRow) * Self.tileSizeF
-        for col in (0...Stage1MapData.mapCols0).reversed() {
+        for col in (0...StageMapData.mapCols0).reversed() {
             if mapData.objectId(row: row, col: col) == 22 {
                 spawnBlockAt(row: row, col: col, y: topOffset)
             }
@@ -647,6 +656,9 @@ final class Stage1Scene: SKScene {
         let extra = mapData.objectExtra(row: row, col: col)
         let blockType = MSXBlockType(rawValue: extra) ?? .rook
         let bx = CGFloat(col * Self.tileSize)
+        // Blocks live in sprite space (screen top = y - 16), so `+16` lines the sprite and its hitbox up
+        // with the `?` map tile at `row` (`MapSystem::spawnBlock(row, col, extra, topOffset + TILE_SIZE_X2)`).
+        let by = y + Self.tileSizeX2
 
         let node = SKSpriteNode(texture: blockQuestionTexture, size: CGSize(width: 16, height: 16))
         node.zPosition = 6
@@ -659,7 +671,7 @@ final class Stage1Scene: SKScene {
             mapCol: col,
             type: blockType,
             x: bx,
-            y: y
+            y: by
         )
         questionBlocks.append(block)
     }
@@ -1043,7 +1055,7 @@ final class Stage1Scene: SKScene {
 
             // 1c. Check Stage 1 Boss (`Medusa`) Hitbox (`BossSystem::hitBoss`)
             if boss.status == .active && sRect.intersects(bossHitBoxRect()) {
-                _ = hitStage1Boss()
+                _ = hitBoss()
                 shot.isFree = true
                 continue
             }
@@ -1052,7 +1064,7 @@ final class Stage1Scene: SKScene {
             let enemyCount = enemies.count
             for idx in 0..<enemyCount {
                 let enemy = enemies[idx]
-                guard !enemy.isFree && enemy.id < 20 else { continue }
+                guard !enemy.isFree && enemy.id < 20 && !enemy.node.isHidden else { continue }
                 if sRect.intersects(enemyBox(enemy)) {
                     let didHit = hitEnemyObject(enemy, instantKill: false)
                     if didHit && !shot.weapon.isSuperWeapon {
@@ -1066,8 +1078,8 @@ final class Stage1Scene: SKScene {
                 continue
             }
 
-            // 1e. Check Destructible Enemy Projectiles (Skeleton Bones `25...27`)
-            for eShot in enemyShots where !eShot.isFree && (25...27).contains(eShot.weaponId) {
+            // 1e. Check Destructible Enemy Projectiles (Skeleton Bones `25...27` & Scythe `33`, `CollisionSystem::hitShot`)
+            for eShot in enemyShots where !eShot.isFree && ((25...27).contains(eShot.weaponId) || eShot.weaponId == 33) {
                 if sRect.intersects(enemyShotBox(eShot)) {
                     spawnEnemyObject(
                         id: 34,
@@ -1145,7 +1157,7 @@ final class Stage1Scene: SKScene {
         let currentEnemiesCount = enemies.count
         for idx in 0..<currentEnemiesCount {
             let enemy = enemies[idx]
-            guard !enemy.isFree && enemy.id < 20 else { continue }
+            guard !enemy.isFree && enemy.id < 20 && !enemy.node.isHidden else { continue }
             let eBox = enemyBox(enemy)
             let ecx = eBox.midX
             let ecy = eBox.midY
@@ -1251,9 +1263,10 @@ final class Stage1Scene: SKScene {
             break
         }
 
+        // Keep showing the plain "collected" block so the `?` map tile underneath stays covered
+        // (`MapSystem::replaceBlock` with `offset = TILE_SIZE_X2 * COLLECTED`).
         block.type = .collected
-        block.isHidden = true
-        block.node.isHidden = true
+        block.node.texture = chessPieceTextureCache[.collected]
     }
 
     func killAllActiveEnemies(playSfx: Bool = true) {
@@ -1465,7 +1478,7 @@ final class Stage1Scene: SKScene {
     func syncHudState() {
         guard let gs = gameState else { return }
         gs.currentWeaponName = playerWeapon.displayName
-        gs.speedLevel = Int(round((playerSpeed - Self.playerInitSpeed) / Self.playerSpeedInc))
+        gs.speedLevel = playerSpeedLevel
         gs.shieldHits = shieldHits
         if powerUpState == .invincible || powerUpState == .transparent {
             gs.activeAuraName = powerUpState.displayName
@@ -1540,7 +1553,7 @@ final class Stage1Scene: SKScene {
             let mapRow = currentRow + rOffset
             for col in 0..<Self.screenCols {
                 let node = tileGridNodes[rowIdx][col]
-                if mapRow >= 0 && mapRow < Stage1MapData.mapRows {
+                if mapRow >= 0 && mapRow < StageMapData.mapRows {
                     let tId = mapData.tileId(row: mapRow, col: col)
                     node.texture = mapTileTextureCache[tId]
                     node.isHidden = false
@@ -1561,6 +1574,16 @@ final class Stage1Scene: SKScene {
                 msxTopY: bossTopY,
                 width: 40,
                 height: 40
+            )
+        }
+
+        if let shadowNode = boss.shadowNode, boss.status != .notSpawned {
+            let shadowY = boss.shadowFixedY ?? (boss.y + Self.tileSizeF * 6.0)
+            shadowNode.position = Self.scenePosition(
+                msxX: boss.x,
+                msxTopY: shadowY - Self.tileSizeX2,
+                width: 40,
+                height: 6
             )
         }
 

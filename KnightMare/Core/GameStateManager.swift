@@ -11,8 +11,8 @@ final class GameStateManager {
         case prologue
         case titleScreen
         case stageIntro
-        case playingStage1
-        case stage1Clear
+        case playingStage
+        case stageClear
         case gameOver
     }
 
@@ -43,6 +43,7 @@ final class GameStateManager {
     var currentScreen: ScreenState = .prologue
     var difficulty: Difficulty = .normal
     var currentStage: Int = 1
+    var selectedStartStage: Int = 1
     var score: Int = 0 {
         didSet {
             if score > hiScore {
@@ -53,7 +54,7 @@ final class GameStateManager {
     var hiScore: Int = 20000
     var lives: Int = 3
     var isStagePaused: Bool = false
-    var stage1ProgressRows: Int = 0
+    var stageProgressRows: Int = 0
     var showVirtualControls: Bool = true
 
     // Marco 3, 4, 5 & 6 HUD status properties
@@ -67,6 +68,18 @@ final class GameStateManager {
     var activeEnemiesCount: Int = 0
     var bossHp: Int = 0
     var bossMaxHp: Int = 0
+
+    /// Weapon and speed upgrades carried from a cleared stage into the next one (GDD §8).
+    var carriedWeapon: MSXWeapon = .arrow
+    var carriedSpeedLevel: Int = 0
+
+    var currentStageDefinition: StageDefinition {
+        StageDefinition.forStage(currentStage)
+    }
+
+    var hasNextStage: Bool {
+        StageDefinition.all.contains { $0.number == currentStage + 1 }
+    }
 
     var isSoundEnabled: Bool = true {
         didSet {
@@ -107,18 +120,41 @@ final class GameStateManager {
         }
     }
 
-    func startStage1() {
+    /// Cycles the title screen's starting stage through the implemented stages (`TitleScreen` menu item 1).
+    func cycleStartStage(delta: Int = 1) {
+        let numbers = StageDefinition.all.map(\.number)
+        let index = numbers.firstIndex(of: selectedStartStage) ?? 0
+        selectedStartStage = numbers[(index + delta + numbers.count) % numbers.count]
+        RetroAudioSynthesizer.shared.playMenuMove()
+    }
+
+    /// Starts a brand-new game from the stage selected on the title screen.
+    func startNewGame() {
         score = 0
         lives = 3
-        currentStage = 1
+        currentStage = selectedStartStage
+        carriedWeapon = .arrow
+        carriedSpeedLevel = 0
+        wavesClearedCount = 0
+        beginStageIntro()
+    }
+
+    /// Moves on to the next stage, keeping score, lives, weapon and speed upgrades.
+    func advanceToNextStage() {
+        guard hasNextStage else { return }
+        currentStage += 1
+        beginStageIntro()
+    }
+
+    private func beginStageIntro() {
         isStagePaused = false
-        stage1ProgressRows = 0
-        currentWeaponName = MSXWeapon.arrow.displayName
-        speedLevel = 0
+        stageProgressRows = 0
+        currentWeaponName = carriedWeapon.displayName
+        speedLevel = carriedSpeedLevel
         shieldHits = 0
         activeAuraName = ""
         auraRemainingSeconds = 0
-        wavesClearedCount = 0
+        freezeRemainingSeconds = 0
         activeEnemiesCount = 0
         bossHp = 0
         bossMaxHp = 0
@@ -128,20 +164,22 @@ final class GameStateManager {
         }
     }
 
-    func enterStage1Gameplay() {
+    func enterStageGameplay() {
         isStagePaused = false
         withAnimation(.easeInOut(duration: 0.25)) {
-            currentScreen = .playingStage1
+            currentScreen = .playingStage
         }
     }
 
-    func triggerStage1Clear() {
+    func triggerStageClear(weapon: MSXWeapon, speedLevel carriedSpeed: Int) {
+        carriedWeapon = weapon
+        carriedSpeedLevel = carriedSpeed
         isStagePaused = false
         bossHp = 0
         bossMaxHp = 0
         RetroAudioSynthesizer.shared.playTitleFanfare()
         withAnimation(.easeInOut(duration: 0.4)) {
-            currentScreen = .stage1Clear
+            currentScreen = .stageClear
         }
     }
 

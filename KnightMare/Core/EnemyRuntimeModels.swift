@@ -70,6 +70,10 @@ final class EnemyShot {
     var gpr1: Int = 0
     var rotQuarterTurns: Int = 0
     var isFree: Bool = false
+    /// Scythe (`33`): orbit center, current angle (degrees) and per-tick angle step (`±1`).
+    var orbitCenter: CGPoint?
+    var orbitAngle: CGFloat = 0
+    var orbitStep: CGFloat = 1
 
     init(
         weaponId: Int,
@@ -136,8 +140,8 @@ final class EnemyWaveTracker {
     }
 }
 
-/// Runtime state for the Stage 1 Boss (Medusa / Hecate, `BossSystem.cpp` in `knightmare-raylib`).
-final class Stage1BossRuntime {
+/// Runtime state for the current stage boss (`BossSystem.cpp` in `knightmare-raylib`).
+final class StageBossRuntime {
     enum Status: Int {
         case notSpawned = 0
         case dying = 1
@@ -157,10 +161,24 @@ final class Stage1BossRuntime {
     var portalStartMs: Int = 0
     var isPortalActive: Bool = false
     var wipeStep: Int = 0
+    /// Lissajous phases in degrees (Stage 2 boss, body `gpr2` / `gpr3`).
+    var phaseX: CGFloat = 0
+    var phaseY: CGFloat = 0
+    /// Horizontal offset (px) into `bosses.png` for the current damage skin (Stage 2 boss).
+    var skinOffsetX: Int = 0
+    /// Ground shadow; its Y is pinned once the boss activates.
+    var shadowNode: SKSpriteNode?
+    var shadowFixedY: CGFloat?
 
     var node: SKSpriteNode?
 
     func reset() {
+        phaseX = 0
+        phaseY = 0
+        skinOffsetX = 0
+        shadowNode?.removeFromParent()
+        shadowNode = nil
+        shadowFixedY = nil
         status = .notSpawned
         x = 108
         y = -24

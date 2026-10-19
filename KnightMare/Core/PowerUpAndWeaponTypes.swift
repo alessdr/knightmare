@@ -193,7 +193,7 @@ enum MSXObjectTiles {
         2: ObjDataEntry(speedX: 75, speedY: 65, gpr1: 1, gpr2: 90, gpr3: 0),
         3: ObjDataEntry(speedX: 120, speedY: 33, gpr1: 1, gpr2: 0, gpr3: 0),
         4: ObjDataEntry(speedX: 40, speedY: 40, gpr1: 3, gpr2: 0, gpr3: 0),
-        5: ObjDataEntry(speedX: 25, speedY: 360, gpr1: 1, gpr2: 0, gpr3: 0),
+        5: ObjDataEntry(speedX: 25, speedY: 360, gpr1: 0, gpr2: 0, gpr3: 0), // gpr1 = 1 once deflected (attack)
         6: ObjDataEntry(speedX: 70, speedY: 70, gpr1: 1, gpr2: 0, gpr3: 0),
         7: ObjDataEntry(speedX: 50, speedY: 15, gpr1: 3, gpr2: 0, gpr3: 0),
         8: ObjDataEntry(speedX: 160, speedY: 160, gpr1: 1, gpr2: 0, gpr3: 0),

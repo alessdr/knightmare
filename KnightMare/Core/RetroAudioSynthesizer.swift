@@ -227,12 +227,12 @@ final class RetroAudioSynthesizer {
         }
     }
 
-    func playStage1Music() {
-        playMusic(.stage1, loop: true, volume: 0.65)
+    func playStageMusic(_ track: MusicTrack) {
+        playMusic(track, loop: true, volume: 0.65)
     }
 
-    func playBoss1Music() {
-        playMusic(.boss1, loop: true, volume: 0.7)
+    func playBossMusic(_ track: MusicTrack) {
+        playMusic(track, loop: true, volume: 0.7)
     }
 
     func playPowerUpMusic() {

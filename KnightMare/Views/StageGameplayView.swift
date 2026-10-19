@@ -1,17 +1,24 @@
 import SwiftUI
 import SpriteKit
 
-/// Main Stage 1 gameplay container pairing the MSX HUD bar, the 256×176 SpriteKit viewport,
+/// Main stage gameplay container pairing the MSX HUD bar, the 256×176 SpriteKit viewport,
 /// hardware keyboard monitoring, and optional virtual arcade controls.
-struct Stage1GameplayView: View {
+struct StageGameplayView: View {
     let gameState: GameStateManager
 
     @State private var inputController = InputController()
-    @State private var scene: Stage1Scene = {
-        let s = Stage1Scene(size: CGSize(width: Stage1Scene.msxWidth, height: Stage1Scene.msxHeight))
+    @State private var scene: StageScene
+
+    init(gameState: GameStateManager) {
+        self.gameState = gameState
+        // The stage definition and carried upgrades must be available before SpriteView presents
+        // the scene (`didMove(to:)` → `startNewStage()`).
+        let s = StageScene(size: CGSize(width: StageScene.msxWidth, height: StageScene.msxHeight))
         s.scaleMode = .aspectFit
-        return s
-    }()
+        s.definition = gameState.currentStageDefinition
+        s.gameState = gameState
+        _scene = State(initialValue: s)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,7 +31,7 @@ struct Stage1GameplayView: View {
                     Color(red: 0.02, green: 0.02, blue: 0.05)
 
                     SpriteView(scene: scene, options: [.ignoresSiblingOrder])
-                        .aspectRatio(Stage1Scene.msxWidth / Stage1Scene.msxHeight, contentMode: .fit)
+                        .aspectRatio(StageScene.msxWidth / StageScene.msxHeight, contentMode: .fit)
                         .overlay(
                             Rectangle()
                                 .strokeBorder(Color(white: 0.28), lineWidth: 2)
@@ -444,8 +451,8 @@ struct GameOverView: View {
         }
     }
 }
-/// Classic MSX "STAGE 01 CLEAR" victory screen displayed after defeating Medusa & entering the portal.
-struct Stage1ClearView: View {
+/// Classic MSX "STAGE NN CLEAR" victory screen displayed after defeating the boss & entering the portal.
+struct StageClearView: View {
     let gameState: GameStateManager
 
     var body: some View {
@@ -454,20 +461,20 @@ struct Stage1ClearView: View {
 
             VStack(spacing: 22) {
                 MSXBitmapText(
-                    text: "STAGE 01 CLEAR",
+                    text: String(format: "STAGE %02d CLEAR", gameState.currentStage),
                     glyphSize: 22,
                     tint: Color(red: 1.0, green: 0.85, blue: 0.2)
                 )
 
                 MSXBitmapText(
-                    text: "MOUNT ATHOS CONQUERED",
+                    text: gameState.currentStageDefinition.clearMessage,
                     glyphSize: 13,
                     tint: .cyan
                 )
 
                 VStack(spacing: 12) {
                     MSXBitmapText(
-                        text: String(format: "FINAL SCORE %06d", gameState.score),
+                        text: String(format: gameState.hasNextStage ? "SCORE       %06d" : "FINAL SCORE %06d", gameState.score),
                         glyphSize: 14,
                         tint: .white
                     )
@@ -488,10 +495,14 @@ struct Stage1ClearView: View {
 
                 HStack(spacing: 18) {
                     Button {
-                        gameState.startStage1()
+                        if gameState.hasNextStage {
+                            gameState.advanceToNextStage()
+                        } else {
+                            gameState.startNewGame()
+                        }
                     } label: {
                         MSXBitmapText(
-                            text: "PLAY AGAIN",
+                            text: gameState.hasNextStage ? "NEXT STAGE" : "PLAY AGAIN",
                             glyphSize: 12,
                             tint: .black
                         )

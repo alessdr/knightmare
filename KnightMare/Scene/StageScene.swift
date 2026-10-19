@@ -306,7 +306,10 @@ final class StageScene: SKScene {
 
     private func setupPlayerNodes() {
         playerSpriteNode.size = CGSize(width: 16, height: 16)
-        playerSpriteNode.zPosition = 20
+        // The layer depth lives on the crop node: once it gets a mask (stage exit door) SpriteKit renders the
+        // cropped subtree as one unit at the crop node's own zPosition, so a z of 0 there drew Popolon under the map.
+        playerClipNode.zPosition = 20
+        playerSpriteNode.zPosition = 0
         updatePlayerTexture()
 
         shieldSpriteNode.size = CGSize(width: 16, height: 7)

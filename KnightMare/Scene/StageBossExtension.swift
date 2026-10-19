@@ -60,11 +60,16 @@ extension StageScene {
             boss.y = (currentRow == 0) ? (Self.tileSizeF * 6.0) : (-Self.tileSizeF * 3.0) // 48 or -24
             // First walks over to x = 48 (`body->gpr3 = TILE_SIZE * 6`); no shadow
             boss.targetX = Self.tileSizeF * 6.0
+        case .phantomKnight:
+            // Waits unseen at its home spot until the arena opens (`showBossBody` only on activation)
+            boss.x = phantomKnightHome.x
+            boss.y = Self.tileSizeF * 6.0
         }
 
         let tex = bossSheetTexture(x: bossBaseFrame.x, y: bossBaseFrame.y)
         let node = SKSpriteNode(texture: tex, size: bossFrameSize)
         node.zPosition = 9.5
+        node.isHidden = (definition.bossKind == .phantomKnight)
         enemiesLayerNode.addChild(node)
         boss.node = node
     }
@@ -90,9 +95,9 @@ extension StageScene {
                 boss.y = Self.tileSizeF * 6.0 // 48
             }
             // Enqueue 3 spinning ball/cloud minions (`id == 5`) at 3.0s, 6.5s, and 9.5s (`BossSystem.cpp` lines 25-27)
-            enqueueBossMinion(delayMs: 3000)
-            enqueueBossMinion(delayMs: 6500)
-            enqueueBossMinion(delayMs: 9500)
+            enqueueBossMinion(objId: 5, x: 0, y: 0, delayMs: 3000)
+            enqueueBossMinion(objId: 5, x: 0, y: 0, delayMs: 6500)
+            enqueueBossMinion(objId: 5, x: 0, y: 0, delayMs: 9500)
         case .scytheReaper, .cyclops, .ogre:
             break
         case .wingedDemon:
@@ -103,17 +108,24 @@ extension StageScene {
             // Starts guarded until its helmet first opens (`activateShield(true)`, `activateHitBox(2, false)`)
             boss.isShielded = true
             boss.stepTick = 0
+        case .phantomKnight:
+            boss.node?.isHidden = false
+            boss.stepTick = 0
+            aimPhantomKnight()
+            // Two Blue Knights join the fight at 4 s and 8 s
+            enqueueBossMinion(objId: 4, x: phantomKnightHome.x, y: phantomKnightHome.y, delayMs: 4000)
+            enqueueBossMinion(objId: 4, x: phantomKnightHome.x, y: phantomKnightHome.y, delayMs: 8000)
         }
         syncHudState()
     }
 
-    func enqueueBossMinion(delayMs: Int) {
+    func enqueueBossMinion(objId: Int, x: CGFloat, y: CGFloat, delayMs: Int) {
         spawnQueue.append(
             QueuedSpawnAction(
                 execCount: 1,
-                objId: 5,
-                x: 0,
-                y: 0,
+                objId: objId,
+                x: x,
+                y: y,
                 objCfg: 0,
                 delayMs: delayMs,
                 nextExecMs: clockMs + delayMs,
@@ -122,14 +134,32 @@ extension StageScene {
         )
     }
 
-    func scheduleBossMinionReplacement() {
+    /// An enemy was killed or left the screen during the boss fight (`BossSystem::bossEnemyDestroyed`):
+    /// Medusa replaces each lost cloud; the Stage 7 boss calls another Blue Knight while fewer than 2 remain.
+    func bossEnemyRemoved(id: Int) {
         guard boss.status == .active else { return }
-        let randomDelay = Int.random(in: 2000...8000)
-        enqueueBossMinion(delayMs: randomDelay)
+        switch definition.bossKind {
+        case .medusa:
+            guard id == 5 else { return }
+            enqueueBossMinion(objId: 5, x: 0, y: 0, delayMs: Int.random(in: 2000...8000))
+        case .phantomKnight:
+            let alive = enemies.filter { !$0.isFree && $0.id < 20 }.count
+            guard alive < 2 else { return }
+            enqueueBossMinion(objId: 4, x: phantomKnightHome.x, y: phantomKnightHome.y, delayMs: Int.random(in: 2000...7000))
+        case .scytheReaper, .wingedDemon, .cyclops, .redKnight, .ogre:
+            break
+        }
+    }
+
+    /// Where the Stage 7 boss re-enters and its Blue Knights appear (`SCREEN_WIDTH / 2 - TILE_SIZE`, `TILE_SIZE * 5`).
+    var phantomKnightHome: CGPoint {
+        CGPoint(x: Self.msxWidth / 2.0 - Self.tileSizeF, y: Self.tileSizeF * 5.0)
     }
 
     func scrollBoss() {
         guard boss.status != .notSpawned, boss.status != .dying else { return }
+        // The Stage 7 boss waits at a fixed spot on screen instead of scrolling in with the map
+        guard definition.bossKind != .phantomKnight else { return }
         boss.y += 1
     }
 
@@ -177,7 +207,46 @@ extension StageScene {
             moveRedKnight(dt: dt)
         case .ogre:
             moveOgre(dt: dt)
+        case .phantomKnight:
+            movePhantomKnight(dt: dt)
         }
+    }
+
+    /// Stage 7 boss: flies straight, re-aiming at Popolon every 200 ticks, bouncing off the side edges and the top,
+    /// and speeding up from 30 to 70 px/s as it loses life. Leaving through the bottom brings it back home.
+    /// (The reference re-aims at its own current heading, so it starts flying up and never comes back.)
+    private func movePhantomKnight(dt: CGFloat) {
+        let edgeLeft = Self.tileSizeX4 // 32
+        let edgeRight = Self.msxWidth - Self.tileSizeF * 6.0 // 208
+        let topY = Self.tileSizeX2 // sprite space: top of the screen
+
+        boss.stepTick += 1
+        if boss.stepTick % 200 == 0 {
+            aimPhantomKnight()
+        }
+        let lostFraction = CGFloat(boss.maxHp - boss.hp) / CGFloat(max(1, boss.maxHp))
+        let speed = 30.0 + CGFloat(definition.bossBaseLife) * lostFraction
+        let radians = boss.heading * .pi / 180.0
+        boss.x += speed * cos(radians) * dt
+        boss.y += speed * sin(radians) * dt
+
+        if boss.x < edgeLeft || boss.x > edgeRight {
+            boss.x = min(max(boss.x, edgeLeft), edgeRight)
+            boss.heading = 180 - boss.heading
+        }
+        if boss.y < topY {
+            boss.y = topY
+            boss.heading = -boss.heading
+        }
+        if boss.y > Self.msxHeight + 1 {
+            boss.x = phantomKnightHome.x
+            boss.y = phantomKnightHome.y
+            aimPhantomKnight()
+        }
+    }
+
+    private func aimPhantomKnight() {
+        boss.heading = atan2(playerY - boss.y, playerX - boss.x) * 180.0 / .pi
     }
 
     /// Stage 6 boss (`BossSystem::moveBoss` case 6): walks to its target; once there, every 300 ticks it stomps,
@@ -271,6 +340,7 @@ extension StageScene {
         switch definition.bossKind {
         case .medusa, .scytheReaper, .wingedDemon: return CGSize(width: 40, height: 40)
         case .cyclops, .redKnight, .ogre: return CGSize(width: 40, height: 48)
+        case .phantomKnight: return CGSize(width: 16, height: 16)
         }
     }
 
@@ -292,6 +362,7 @@ extension StageScene {
         case .cyclops: return (0, 80)
         case .redKnight: return (120, 80)
         case .ogre: return (0, 128)
+        case .phantomKnight: return (0, 56)
         }
     }
 
@@ -316,6 +387,19 @@ extension StageScene {
         case .ogre:
             let x = bossBaseFrame.x + ((animTick % 12 > 5 && boss.status != .dying) ? 40 : 0)
             node.texture = bossSheetTexture(x: x, y: bossBaseFrame.y)
+        case .phantomKnight:
+            // White while healthy; flashes blue below ~half life and red below ~a quarter (thresholds 21/11 of 40)
+            let scaledLife = boss.hp * definition.bossBaseLife / max(1, boss.maxHp)
+            var x = bossBaseFrame.x
+            if boss.status != .dying && animTick % 4 < 2 {
+                if scaledLife < 11 {
+                    x += 32
+                } else if scaledLife < 21 {
+                    x += 16
+                }
+            }
+            node.texture = bossSheetTexture(x: x, y: bossBaseFrame.y)
+            node.xScale = (animTick % 6 <= 2) ? -1 : 1
         }
     }
 
@@ -363,6 +447,11 @@ extension StageScene {
             guard tickCount % 70 == 0,
                   Double.random(in: 0...1) < definition.shootChance(for: gameState?.difficulty ?? .normal) else { return }
             fireBossFireball(landsAtPopolon: false)
+        case .phantomKnight:
+            // Knight arrow at 100 px/s (`calcId == 57`), rolling the stage's shoot chance like the Ogre
+            guard tickCount % 70 == 0,
+                  Double.random(in: 0...1) < definition.shootChance(for: gameState?.difficulty ?? .normal) else { return }
+            fireKnightArrow(fromX: boss.x, fromY: boss.y, speed: 100)
         }
     }
 
@@ -463,12 +552,18 @@ extension StageScene {
     // MARK: - Boss Collisions & Damage (`hitBoss`, `killBoss`, `destroyBoss`)
 
     func bossHitBoxRect() -> CGRect {
-        // Central vulnerable hitbox on Medusa's head/face (`BossSystem::createBossHitBox`)
-        CGRect(x: boss.x + 8.0, y: max(-7.0, boss.y + 8.0), width: 24.0, height: 24.0)
+        if definition.bossKind == .phantomKnight {
+            return CGRect(x: boss.x, y: boss.y, width: bossFrameSize.width, height: bossFrameSize.height)
+        }
+        // Central vulnerable hitbox on the boss's head/face (`BossSystem::createBossHitBox`)
+        return CGRect(x: boss.x + 8.0, y: max(-7.0, boss.y + 8.0), width: 24.0, height: 24.0)
     }
 
     func bossBodyRect() -> CGRect {
-        CGRect(x: boss.x + 4.0, y: boss.y + 4.0, width: bossFrameSize.width - 8.0, height: bossFrameSize.height - 8.0)
+        if definition.bossKind == .phantomKnight {
+            return CGRect(x: boss.x + 2.0, y: boss.y + 2.0, width: 12.0, height: 12.0)
+        }
+        return CGRect(x: boss.x + 4.0, y: boss.y + 4.0, width: bossFrameSize.width - 8.0, height: bossFrameSize.height - 8.0)
     }
 
     func hitBoss() -> Bool {
@@ -579,8 +674,10 @@ extension StageScene {
             (Self.tileSizeF * 5.0, Self.tileSizeX4),
             (Self.tileSizeF, Self.tileSizeF * 5.0)
         ]
+        // Laid out for a 40 px body; scaled down for the small Stage 7 boss
+        let scale = bossFrameSize.width / 40.0
         for (ox, oy) in offsets {
-            if let exp = spawnEnemyObject(id: 34, x: bx + ox, y: by + oy, objCfg: 1, waveGroupId: 0, enqueueRemaining: false) {
+            if let exp = spawnEnemyObject(id: 34, x: bx + ox * scale, y: by + oy * scale, objCfg: 1, waveGroupId: 0, enqueueRemaining: false) {
                 exp.gpr1 = 0
                 applyEnemyBaseTile(exp, tileId: 34)
             }
@@ -682,6 +779,8 @@ extension StageScene {
         tilePx = 7
         scrollOn = true
         freezeTimer = -1
+        // Popolon keeps his screen position, which may now be over water (e.g. the Stage 4 and 7 lakes)
+        placePlayerOnSafeGround()
         refreshMapTileTextures()
         syncHudState()
         syncAllNodePositions()

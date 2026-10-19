@@ -168,6 +168,8 @@ final class StageScene: SKScene {
     var playerIsMoving: Bool = false
     private var fireDownLastFrame: Bool = false
     private var lastShotTimeMs: Int = -100_000
+    /// Set when Popolon fires, cleared after each animation tick (`s.fire`); Red Death ghosts react to it.
+    var playerFiredSinceAnimTick: Bool = false
     private var testBlockCycleIndex: Int = 0
     private var testWaveCycleIndex: Int = 0
 
@@ -590,6 +592,7 @@ final class StageScene: SKScene {
             animateEnemyShots()
             animatePickups()
             animateEnemies()
+            playerFiredSinceAnimTick = false
             animateBoss()
             animateFissures()
             if playerState == .stageClearWipe {
@@ -738,6 +741,30 @@ final class StageScene: SKScene {
 
     // MARK: - Terrain Collision
 
+    /// Moves Popolon to the free ground closest to where he stands (same height first, then higher up), so a
+    /// position change of the map (the HUD "BOSS" shortcut) never leaves him inside water or walls, where the
+    /// scroll would push him off screen at once. A tile of clearance above is required, since the map scrolls down.
+    func placePlayerOnSafeGround() {
+        let isFree: (CGFloat, CGFloat) -> Bool = { x, y in
+            !self.mapCollideForEnemy(px: x, py: y) && !self.mapCollideForEnemy(px: x, py: y - Self.tileSizeF)
+        }
+        guard !isFree(playerX, playerY) else { return }
+
+        let minY = Self.tileSizeF * 6 // same top limit as player movement
+        let maxX = Self.msxWidth - Self.tileSizeX2
+        var y = playerY
+        while y >= minY {
+            for distance in stride(from: CGFloat(0), through: maxX, by: Self.tileSizeF) {
+                for x in [playerX - distance, playerX + distance] where x >= 0 && x <= maxX && isFree(x, y) {
+                    playerX = x
+                    playerY = y
+                    return
+                }
+            }
+            y -= 1
+        }
+    }
+
     func mapCollideForEnemy(px: CGFloat, py: CGFloat) -> Bool {
         let classicYTop = py - Self.tileSizeX2
         let classicYBottom = classicYTop + Self.tileSizeX2 - 1
@@ -870,6 +897,7 @@ final class StageScene: SKScene {
 
         let tileId = playerWeapon.baseTileId
         guard let rect = MSXObjectTiles.shotTiles[tileId] else { return }
+        playerFiredSinceAnimTick = true
 
         var shotsCount = (playerWeapon.rawValue > 6) ? 2 : 1
         var speedX: CGFloat = 0

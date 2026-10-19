@@ -178,6 +178,8 @@ final class StageBossRuntime {
     var isShielded: Bool = false
     /// Stage 5 boss: remaining dash (`body->gpr3`): its sign is the direction, it decays by 1 per tick toward 0.
     var dashVelocity: CGFloat = 0
+    /// Stage 7 boss: flight direction (math angle in degrees, y pointing down).
+    var heading: CGFloat = 0
 
     var node: SKSpriteNode?
 
@@ -192,6 +194,7 @@ final class StageBossRuntime {
         phase = 2
         isShielded = false
         dashVelocity = 0
+        heading = 0
         status = .notSpawned
         x = 108
         y = -24

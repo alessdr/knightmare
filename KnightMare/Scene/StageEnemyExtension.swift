@@ -148,8 +148,9 @@ extension StageScene {
             } else {
                 gpr3 = 1
             }
-        case 16: // Red Death ghost
-            gpr2 = (spawnX > Self.msxWidth / 2.0) ? -135.0 : 135.0
+        case 16: // Red Death ghost: fixed sideways drift toward Popolon's side (`gpr2`, up to 40 px/s)
+            let aimDeg = atan2(spawnX - playerX, spawnY - playerY - 200) * 180.0 / .pi
+            gpr2 = data.speedX * sin(-aimDeg * .pi / 180.0)
         default:
             break
         }
@@ -283,7 +284,7 @@ extension StageScene {
                         if o.x <= 0 || o.x >= Self.msxWidth - Self.tileSizeX2 {
                             recordEnemyEscaped(o)
                             o.isFree = true
-                            scheduleBossMinionReplacement()
+                            bossEnemyRemoved(id: 5)
                             continue
                         }
                     } else if o.gpr3 < 0 && o.x <= Self.tileSizeX2 {
@@ -485,14 +486,8 @@ extension StageScene {
             case 15: // Sorcerer: just walks slowly down (`moveAndProcessObjects` default); it fires a burst
                 speedX = 0
 
-            case 16: // Red Death ghost
-                speedX *= sin(o.gpr2 * .pi / 180.0)
-                speedY *= -cos(o.gpr2 * .pi / 180.0)
-                if o.y > 120 && abs(o.gpr2) > 45 {
-                    o.gpr2 += (o.gpr2 > 0 ? -90.0 : 90.0) * dt
-                } else if abs(o.gpr2) <= 45 {
-                    speedY *= 4.0
-                }
+            case 16: // Red Death ghost: slow descent (20 px/s) with the drift picked at spawn
+                speedX = o.gpr2
 
             default:
                 break
@@ -515,8 +510,8 @@ extension StageScene {
             if o.y < 0 || o.y > maxY || o.x < -Self.tileSizeX2 || o.x > Self.msxWidth + Self.tileSizeF {
                 recordEnemyEscaped(o)
                 o.isFree = true
-                if o.id == 5 {
-                    scheduleBossMinionReplacement()
+                if o.id < 20 {
+                    bossEnemyRemoved(id: o.id)
                 }
             }
         }
@@ -537,8 +532,10 @@ extension StageScene {
             switch o.id {
             case 6, 14:
                 applyEnemyFrameOffset(o, offsetX: slowFrames, baseTileId: o.id)
-            case 1, 2, 3, 16:
+            case 1, 2, 3:
                 applyEnemyFrameOffset(o, offsetX: twoFrames, baseTileId: o.id)
+            case 16:
+                animateRedDeathGhost(o)
             case 4, 9, 10, 15: // Knight, Death ghost, Zombie, Sorcerer: one frame mirrored back and forth (`effect` flip)
                 o.flipX = (animTick % 6 > 2)
             case 5, 8: // Cloud, and the Black Demon while disguised; the revealed demon just flips
@@ -577,6 +574,27 @@ extension StageScene {
                 break
             }
         }
+    }
+
+    /// Red Death ghost (`animateObjects` case 16): idle until Popolon fires, then runs a 40-tick reaction
+    /// (`gpr3` counter): flickers (1-8), holds its alternate frame (9-32), flickers again (33-40), back to idle.
+    func animateRedDeathGhost(_ o: EnemyObject) {
+        var life = Int(o.gpr3)
+        var offsetX = 0
+        if life > 40 {
+            life = 0
+        } else if life > 32 {
+            offsetX = (life % 2 != 0) ? 16 : 0
+        } else if life > 8 {
+            offsetX = 16
+        } else if life > 0 {
+            offsetX = (life % 2 != 0) ? 16 : 0
+        }
+        if life > 0 { life += 1 }
+        if playerFiredSinceAnimTick && life == 0 { life = 1 }
+        o.gpr3 = CGFloat(life)
+        guard life != 0 else { return }
+        applyEnemyFrameOffset(o, offsetX: offsetX, baseTileId: 16)
     }
 
     // MARK: - Active Aiming, Periodic Firing & Parting Shot (`ObjectSystem::enemiesFire`)
@@ -633,12 +651,10 @@ extension StageScene {
             weaponId = 24
             speed = 100
             angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
-        case 16: // Red Death ghost energy ray (`24`)
+        case 16: // Red Death ghost energy ray (`24`) aimed at Popolon, speed 100
             weaponId = 24
-            angle = o.velocityAngleDeg()
-            if angle == 0 {
-                angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
-            }
+            speed = 100
+            angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
         case 15: // Sorcerer: 6 dots at speed 70 in 45° steps, leaving left and right open (`enemyFire` case 15)
             for compass in [0.0, 45.0, 135.0, 180.0, 225.0, 315.0] as [CGFloat] {
                 let radians = compass * .pi / 180.0
@@ -679,9 +695,14 @@ extension StageScene {
     /// Blue Knight arrow (`enemyFire` case 4): aimed at Popolon, drawn with the arrow sprite and quarter-turn
     /// rotation of its 45° sector and launched from the matching side of the knight.
     func fireKnightArrow(from o: EnemyObject) {
-        let angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
-        var x = o.x + Self.tileSizeF
-        var y = o.y + Self.tileSizeF
+        fireKnightArrow(fromX: o.x, fromY: o.y, speed: 70)
+    }
+
+    /// Knight arrow from a 16×16 shooter at `(fromX, fromY)` (also used by the Stage 7 boss at speed 100).
+    func fireKnightArrow(fromX: CGFloat, fromY: CGFloat, speed: CGFloat) {
+        let angle = compassAngleTowardPopolon(fromX: fromX, fromY: fromY)
+        var x = fromX + Self.tileSizeF
+        var y = fromY + Self.tileSizeF
         let weaponId: Int
         let rot: Int
         switch angle {
@@ -694,7 +715,6 @@ extension StageScene {
         case 157..<202: weaponId = 29; rot = 0; y += Self.tileSizeF
         default: weaponId = 29; rot = 2; y -= Self.tileSizeF * 2.5
         }
-        let speed: CGFloat = 70
         let radians = angle * .pi / 180.0
         guard let shot = spawnEnemyShot(
             weaponId: weaponId,
@@ -921,9 +941,6 @@ extension StageScene {
             gameState?.incrementScore(MSXObjectTiles.objPoints[originalId] ?? 100)
         }
         recordEnemyKilled(o)
-        if originalId == 5 && boss.status == .active {
-            scheduleBossMinionReplacement()
-        }
 
         // Transform into fire explosion (`objId == 34`, `FIRE_ANIM`)
         o.id = 34
@@ -939,6 +956,9 @@ extension StageScene {
         applyEnemyBaseTile(o, tileId: 34)
         if playSfx {
             RetroAudioSynthesizer.shared.playSfx(.enemyKill)
+        }
+        if originalId < 20 {
+            bossEnemyRemoved(id: originalId) // after the conversion above, so it no longer counts as alive
         }
     }
 

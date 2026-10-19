@@ -208,3 +208,27 @@ final class StageBossRuntime {
         node = nil
     }
 }
+
+/// Ground fissure opened by the Stage 6 boss's stomp (object `49` in `knightmare-raylib`): a crack that grows
+/// downward from the boss's feet, 8 px per step up to 96 px, kills Popolon on contact and then closes.
+final class GroundFissure {
+    static let maxGrowthSteps = 12
+    static let lifetimeSteps = 22
+
+    let node: SKSpriteNode
+    let x: CGFloat
+    let y: CGFloat
+    var step: Int = 0
+    var isFree: Bool = false
+
+    init(node: SKSpriteNode, x: CGFloat, y: CGFloat) {
+        self.node = node
+        self.x = x
+        self.y = y
+    }
+
+    /// Current crack length in px (`8 + min(96, 8 * step)`, `ObjectSystem::animateObjects` case 49).
+    var length: CGFloat {
+        8 + 8 * CGFloat(min(step, Self.maxGrowthSteps))
+    }
+}

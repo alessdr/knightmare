@@ -56,6 +56,10 @@ extension StageScene {
             boss.y = (currentRow == 0) ? (Self.tileSizeF * 6.0) : (-Self.tileSizeF * 3.0) // 48 or -24
             // First dash heads left (`body->gpr3 = s.player.x < SCREEN_WIDTH ? -120 : 120`); no shadow
             boss.dashVelocity = -120
+        case .ogre:
+            boss.y = (currentRow == 0) ? (Self.tileSizeF * 6.0) : (-Self.tileSizeF * 3.0) // 48 or -24
+            // First walks over to x = 48 (`body->gpr3 = TILE_SIZE * 6`); no shadow
+            boss.targetX = Self.tileSizeF * 6.0
         }
 
         let tex = bossSheetTexture(x: bossBaseFrame.x, y: bossBaseFrame.y)
@@ -89,7 +93,7 @@ extension StageScene {
             enqueueBossMinion(delayMs: 3000)
             enqueueBossMinion(delayMs: 6500)
             enqueueBossMinion(delayMs: 9500)
-        case .scytheReaper, .cyclops:
+        case .scytheReaper, .cyclops, .ogre:
             break
         case .wingedDemon:
             // Starts with its wings folded: only the shield is up (`activateHitBox(2, false)`)
@@ -171,7 +175,67 @@ extension StageScene {
             moveBossLissajous(speedX: 1.8, speedY: 3.6, height: 12.0, baseY: Self.tileSizeF * 6.0, dt: dt)
         case .redKnight:
             moveRedKnight(dt: dt)
+        case .ogre:
+            moveOgre(dt: dt)
         }
+    }
+
+    /// Stage 6 boss (`BossSystem::moveBoss` case 6): walks to its target; once there, every 300 ticks it stomps,
+    /// opening a ground fissure under its feet, and picks a new target 72 px toward Popolon (bouncing off the edges).
+    private func moveOgre(dt: CGFloat) {
+        let edgeLeft = Self.tileSizeX4 // 32
+        let edgeRight = (Self.msxWidth - Self.tileSizeX4) - Self.tileSizeF * 5.0 // 184
+
+        boss.stepTick += 1
+        guard abs(boss.x - boss.targetX) <= 0.75 else {
+            boss.x += ((boss.x > boss.targetX) ? -1.0 : 1.0) * 60.0 * dt // BOSS_SPEED
+            return
+        }
+        boss.x = boss.targetX
+        guard boss.stepTick % 300 == 0 else { return }
+
+        RetroAudioSynthesizer.shared.playSfx(.terrain)
+        openGroundFissure(x: boss.x + Self.tileSizeX2, y: boss.y + Self.tileSizeF * 6.0)
+        var direction: CGFloat = (boss.x > playerX) ? -1.0 : 1.0
+        if abs(boss.x - edgeLeft) < 0.5 { direction = 1 }
+        if abs(boss.x - edgeRight) < 0.5 { direction = -1 }
+        boss.targetX = min(max(boss.x + Self.tileSizeF * 9.0 * direction, edgeLeft), edgeRight)
+    }
+
+    private func openGroundFissure(x: CGFloat, y: CGFloat) {
+        let node = SKSpriteNode()
+        node.zPosition = 7 // on the ground: above the map and blocks, under shadows and enemies
+        node.anchorPoint = CGPoint(x: 0.5, y: 1.0) // grows downward from the boss's feet
+        enemiesLayerNode.addChild(node)
+        let fissure = GroundFissure(node: node, x: x, y: y)
+        fissures.append(fissure)
+        updateFissureNode(fissure)
+    }
+
+    /// Grows each fissure by one 8 px step every 2 animation ticks until 96 px, then closes it after 22 steps.
+    /// (The reference only steps every 8 animation ticks, a side effect of `fmod(animTick, 1.6)` on an integer.)
+    func animateFissures() {
+        guard animTick % 2 == 0 else { return }
+        for fissure in fissures where !fissure.isFree {
+            fissure.step += 1
+            if fissure.step > GroundFissure.lifetimeSteps {
+                fissure.isFree = true
+            } else {
+                updateFissureNode(fissure)
+            }
+        }
+    }
+
+    /// Shows the bottom `length` px of the crack strip in `objects.png` (x 240, ending at y 200), so the crack's
+    /// tip leads as it grows.
+    private func updateFissureNode(_ fissure: GroundFissure) {
+        let length = fissure.length
+        fissure.node.texture = SpriteSheetManager.shared.texture(
+            from: .objects, x: 240, y: 200 - Int(length), width: 16, height: Int(length)
+        )
+        fissure.node.size = CGSize(width: 16, height: length)
+        let topLeft = Self.scenePosition(msxX: fissure.x, msxTopY: fissure.y - Self.tileSizeX2, width: 16, height: 0)
+        fissure.node.position = topLeft
     }
 
     /// Stage 5 boss (`BossSystem::moveBoss` case 5). Every 200 ticks it closes its helmet and dashes toward
@@ -206,7 +270,7 @@ extension StageScene {
     var bossFrameSize: CGSize {
         switch definition.bossKind {
         case .medusa, .scytheReaper, .wingedDemon: return CGSize(width: 40, height: 40)
-        case .cyclops, .redKnight: return CGSize(width: 40, height: 48)
+        case .cyclops, .redKnight, .ogre: return CGSize(width: 40, height: 48)
         }
     }
 
@@ -227,6 +291,7 @@ extension StageScene {
         case .wingedDemon: return (200, 0)
         case .cyclops: return (0, 80)
         case .redKnight: return (120, 80)
+        case .ogre: return (0, 128)
         }
     }
 
@@ -247,6 +312,9 @@ extension StageScene {
             var x = bossBaseFrame.x
             if animTick % 10 > 4 && boss.status != .dying { x += 40 }
             if !boss.isShielded { x += 80 }
+            node.texture = bossSheetTexture(x: x, y: bossBaseFrame.y)
+        case .ogre:
+            let x = bossBaseFrame.x + ((animTick % 12 > 5 && boss.status != .dying) ? 40 : 0)
             node.texture = bossSheetTexture(x: x, y: bossBaseFrame.y)
         }
     }
@@ -290,6 +358,11 @@ extension StageScene {
         case .redKnight:
             guard tickCount % 70 == 0 else { return }
             fireRedKnightAxes()
+        case .ogre:
+            // The only boss whose shot still rolls the stage's shoot chance (`bossFire` keeps `disableRnd` off)
+            guard tickCount % 70 == 0,
+                  Double.random(in: 0...1) < definition.shootChance(for: gameState?.difficulty ?? .normal) else { return }
+            fireBossFireball(landsAtPopolon: false)
         }
     }
 
@@ -305,6 +378,12 @@ extension StageScene {
     /// Stage 4 boss (`calcId == 54`, stage 4 variant): a red fireball (`28`, sprite `+16` px) thrown downward
     /// toward Popolon that lands at the height he stood when it was fired and burns there for a moment.
     private func fireCyclopsFireball() {
+        fireBossFireball(landsAtPopolon: true)
+    }
+
+    /// Single fireball (`28`, `calcId` 54/56/58) aimed downward (150°-210°) at Popolon at 110 px/s. The Stage 4 boss
+    /// throws the red variant (`+16` px) that lands at Popolon's height and burns; the others fly straight on.
+    private func fireBossFireball(landsAtPopolon: Bool) {
         let originX = boss.x + Self.tileSizeX2
         let originY = boss.y + Self.tileSizeF * 4.0
         let aim = min(210.0, max(150.0, compassAngleTowardPopolon(fromX: originX, fromY: originY)))
@@ -318,8 +397,10 @@ extension StageScene {
             speedY: -speed * cos(radians),
             angleDeg: aim
         ) else { return }
-        shot.stopAtY = playerY
-        shot.node.texture = SpriteSheetManager.shared.texture(from: .objects, x: 99 + 16, y: 35, width: 9, height: 9)
+        if landsAtPopolon {
+            shot.stopAtY = playerY
+            shot.node.texture = SpriteSheetManager.shared.texture(from: .objects, x: 99 + 16, y: 35, width: 9, height: 9)
+        }
     }
 
     /// Stage 3 boss (`calcId == 53`): 7 fireballs (`28`) fanned ±60° in 20° steps around a downward aim at Popolon.

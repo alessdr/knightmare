@@ -202,6 +202,7 @@ final class StageScene: SKScene {
     private var questionBlocks: [QuestionBlock] = []
     private var bridgeSprites: [BridgeSprite] = []
     var enemies: [EnemyObject] = []
+    var fissures: [GroundFissure] = []
     var enemyShots: [EnemyShot] = []
     var spawnQueue: [QueuedSpawnAction] = []
     var waveTrackers: [Int: EnemyWaveTracker] = [:]
@@ -338,6 +339,9 @@ final class StageScene: SKScene {
     }
 
     func clearDynamicEntities() {
+        for fissure in fissures { fissure.node.removeFromParent() }
+        fissures.removeAll()
+
         for shot in playerShots { shot.node.removeFromParent() }
         playerShots.removeAll()
 
@@ -587,6 +591,7 @@ final class StageScene: SKScene {
             animatePickups()
             animateEnemies()
             animateBoss()
+            animateFissures()
             if playerState == .stageClearWipe {
                 updateStageClearWipe()
             }
@@ -1198,7 +1203,22 @@ final class StageScene: SKScene {
             }
         }
 
-        // 6. Popolon vs Stage 1 Boss Body (`Medusa`)
+        // 6. Popolon vs ground fissures (Stage 6 boss): deadly along their whole visible length; the invincible
+        //    aura closes them instead (`playerHitObj` → `hitObject(o, true, true)` destroys object 49)
+        if playerState == .playing && powerUpState != .transparent {
+            for fissure in fissures where !fissure.isFree {
+                let rect = CGRect(x: fissure.x, y: fissure.y, width: 16, height: fissure.length)
+                guard playerHitbox.intersects(rect) else { continue }
+                if powerUpState == .invincible {
+                    fissure.isFree = true
+                } else {
+                    killPlayer()
+                    return
+                }
+            }
+        }
+
+        // 7. Popolon vs the stage boss body
         if boss.status == .active && powerUpState != .invincible && powerUpState != .transparent {
             if playerHitbox.intersects(bossBodyRect()) {
                 killPlayer()
@@ -1235,6 +1255,11 @@ final class StageScene: SKScene {
                 block.isHidden = true
                 block.node.isHidden = true
                 openRiverBridge(block: block)
+            } else {
+                // First hit reveals the `?` so a secret bridge block over water shows it was found
+                block.isHidden = false
+                block.node.isHidden = false
+                block.node.texture = blockQuestionTexture
             }
         } else if block.hits < maxHits {
             block.isHidden = false
@@ -1550,6 +1575,13 @@ final class StageScene: SKScene {
             }
             return false
         }
+        fissures.removeAll { fissure in
+            if fissure.isFree {
+                fissure.node.removeFromParent()
+                return true
+            }
+            return false
+        }
         enemies.removeAll { enemy in
             if enemy.isFree {
                 enemy.node.removeFromParent()
@@ -1753,7 +1785,7 @@ final class StageScene: SKScene {
         for node in exitWindowNodes { node.isHidden = true }
     }
 
-    private static func scenePosition(msxX: CGFloat, msxTopY: CGFloat, width: CGFloat, height: CGFloat) -> CGPoint {
+    static func scenePosition(msxX: CGFloat, msxTopY: CGFloat, width: CGFloat, height: CGFloat) -> CGPoint {
         CGPoint(
             x: msxX + width / 2.0,
             y: msxHeight - (msxTopY + height / 2.0)

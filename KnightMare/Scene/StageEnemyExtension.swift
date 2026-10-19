@@ -72,7 +72,7 @@ extension StageScene {
 
         var spawnX = x
         var spawnY = y
-        var gpr1 = data.gpr1
+        let gpr1 = data.gpr1
         var gpr2 = data.gpr2
         var gpr3 = data.gpr3
         var spawnSpeedMs = 0
@@ -118,13 +118,12 @@ extension StageScene {
                 gpr2 = 1
                 gpr3 = 1
             }
-        case 10: // Zombie
-            if objCfg > 0 {
-                gpr1 = 0
-                gpr2 = (objCfg == 1) ? -60.0 : 60.0
-                gpr3 = (objCfg == 1) ? -1.0 : 1.0
+        case 10: // Zombie: walks toward where Popolon stood at spawn (`gpr2` = math angle, y down);
+            // `objCfg` ±1000 spawns one of the two halves left behind when it is shot (`gpr2` = ±1000 while sliding)
+            if objCfg != 0 {
+                gpr2 = CGFloat(objCfg)
             } else {
-                gpr2 *= (spawnX > Self.msxWidth / 2.0) ? -1.0 : 1.0
+                gpr2 = atan2(playerY - spawnY, playerX - spawnX) * 180.0 / .pi
             }
         case 11: // Ghost: enters at a side edge; `gpr2` = sway phase, `gpr3` = current facing
             spawnSpeedMs = 400
@@ -169,6 +168,8 @@ extension StageScene {
         applyEnemyFrameTexture(enemy)
         if id == 7 && (objCfg == 1 || objCfg == 2) {
             applyEnemyFrameOffset(enemy, offsetX: objCfg == 1 ? 32 : 48, baseTileId: 7)
+        } else if id == 10 && objCfg != 0 {
+            applyEnemyFrameOffset(enemy, offsetX: 16, baseTileId: 10) // half-zombie sprite
         }
         enemies.append(enemy)
 
@@ -409,24 +410,24 @@ extension StageScene {
                     speedY = 0
                 }
 
-            case 10: // Zombie
-                speedX = o.gpr2
-                if o.gpr3 != 0 && abs(o.gpr2) > 0 {
-                    speedY = 0
-                    o.gpr2 = max(0, abs(o.gpr2) - 35.0 * dt) * o.gpr3
-                    if o.gpr2 == 0 {
-                        if o.gpr3 < 0 {
-                            o.gpr1 = 1
-                            o.gpr2 = 60.0 * ((o.x > Self.msxWidth / 2.0) ? -1.0 : 1.0)
-                            o.gpr3 = 0
-                            applyEnemyBaseTile(o, tileId: 10)
-                            RetroAudioSynthesizer.shared.playSfx(.skeletonRestored)
-                        } else {
-                            o.isFree = true
-                        }
+            case 10: // Zombie (`gpr3` = half's slide offset; once it reaches 30 px the half walks off sideways)
+                if abs(o.gpr2) == 1000 {
+                    // Freshly split half: slides 30 px away from the other one (drawn offset), then commits to it
+                    let side: CGFloat = (o.gpr2 < 0) ? -1.0 : 1.0
+                    o.renderOffsetX = o.gpr3
+                    o.gpr3 += 120.0 * dt * side
+                    if abs(o.gpr3) >= 30 {
+                        o.x += o.gpr3
+                        o.gpr2 = (side > 0) ? 0 : 180 // keeps walking outward (`velocityAngleDeg() - 90`)
+                        o.renderOffsetX = 0
                     }
-                } else if o.x < 16 || o.x > Self.msxWidth - 32 {
-                    o.gpr2 *= -1
+                    speedX = 0
+                    speedY = 0
+                } else {
+                    // Halves walk faster (`OBJ_DATA[10]` gpr2 = 60) than a whole zombie (speedY = 25)
+                    let speed = (abs(o.gpr3) >= 30) ? data.gpr2 : data.speedY
+                    speedX = speed * cos(o.gpr2 * .pi / 180.0)
+                    speedY = speed * sin(o.gpr2 * .pi / 180.0)
                 }
 
             case 11: // Ghost: drifts down while swaying across half the screen, wrapping around the side edges
@@ -481,26 +482,8 @@ extension StageScene {
                     speedY = 0
                 }
 
-            case 15: // Sorcerer
-                if o.y > 24 && o.gpr2 == 0 {
-                    o.gpr2 = 100
-                    applyEnemyFrameOffset(o, offsetX: 0, baseTileId: 15)
-                } else if o.gpr2 > 1 {
-                    o.gpr2 -= 60.0 * dt
-                    if o.gpr2 >= 40 && o.gpr2 <= 60 {
-                        if o.gpr3 == 0 {
-                            o.gpr3 = 1
-                            fireEnemyProjectile(from: o)
-                        }
-                        applyEnemyFrameOffset(o, offsetX: 16, baseTileId: 15)
-                    } else {
-                        applyEnemyFrameOffset(o, offsetX: 0, baseTileId: 15)
-                    }
-                    if o.gpr2 <= 1 { o.gpr2 = 1 }
-                    speedY = 0
-                } else if o.gpr2 == 1 {
-                    speedY *= -1
-                }
+            case 15: // Sorcerer: just walks slowly down (`moveAndProcessObjects` default); it fires a burst
+                speedX = 0
 
             case 16: // Red Death ghost
                 speedX *= sin(o.gpr2 * .pi / 180.0)
@@ -554,13 +537,9 @@ extension StageScene {
             switch o.id {
             case 6, 14:
                 applyEnemyFrameOffset(o, offsetX: slowFrames, baseTileId: o.id)
-            case 1, 2, 3, 10, 16:
-                if o.id == 10 && o.gpr3 != 0 {
-                    applyEnemyFrameOffset(o, offsetX: 32 + twoFrames, baseTileId: 10)
-                } else {
-                    applyEnemyFrameOffset(o, offsetX: twoFrames, baseTileId: o.id)
-                }
-            case 4, 9: // Blue Knight & Death ghost: a single frame mirrored back and forth (`effect` flip)
+            case 1, 2, 3, 16:
+                applyEnemyFrameOffset(o, offsetX: twoFrames, baseTileId: o.id)
+            case 4, 9, 10, 15: // Knight, Death ghost, Zombie, Sorcerer: one frame mirrored back and forth (`effect` flip)
                 o.flipX = (animTick % 6 > 2)
             case 5, 8: // Cloud, and the Black Demon while disguised; the revealed demon just flips
                 if o.id == 5 || o.gpr3 <= 0 {
@@ -578,10 +557,6 @@ extension StageScene {
                 break
             case 13:
                 applyEnemyFrameOffset(o, offsetX: slowFrames, baseTileId: 13)
-            case 15: // Sorcerer
-                if o.gpr2 == 0 || o.gpr2 == 1 {
-                    applyEnemyFrameOffset(o, offsetX: twoFrames, baseTileId: 15, sheetYOverride: 136)
-                }
             case 28: // White explosion
                 if o.gpr1 > 1 {
                     o.isFree = true
@@ -612,7 +587,8 @@ extension StageScene {
             guard o.id < 20 && o.id != 8 else { continue }
             // Before Stage 5 enemies hold fire while still entering the top of the screen (`s.stage < 5 && o.y < 16`)
             if definition.number < 5 && o.y < 16 { continue }
-            guard o.y <= maxShootY else { continue }
+            // Before Stage 6 enemies stop firing once they are low on screen (`s.stage < 6 && o.y > MAX_ENEMIES_SHOOT_Y`)
+            if definition.number < 6 && o.y > maxShootY { continue }
             if Double.random(in: 0...1) < definition.shootChance(for: gameState?.difficulty ?? .normal) {
                 fireEnemyProjectile(from: o)
             }
@@ -626,7 +602,7 @@ extension StageScene {
         var angle: CGFloat = 0
 
         switch o.id {
-        case 6, 11, 12, 13, 14: // Dot bullet aimed at Popolon (`enemyFire` default, speed 70)
+        case 6, 10, 11, 12, 13, 14: // Dot bullet aimed at Popolon (`enemyFire` default, speed 70)
             // From Stage 3 on, 12/13 hold fire during the first half of the map (`s.stage > 2 && s.row > MAP_ROWS / 2`)
             if (o.id == 12 || o.id == 13) && definition.number > 2 && currentRow > StageMapData.mapRows / 2 {
                 return
@@ -663,10 +639,19 @@ extension StageScene {
             if angle == 0 {
                 angle = compassAngleTowardPopolon(fromX: o.x, fromY: o.y)
             }
-        case 15: // Sorcerer 8-way burst (`23`)
-            weaponId = 23
-            shotsCount = 7
-            angle = 0
+        case 15: // Sorcerer: 6 dots at speed 70 in 45° steps, leaving left and right open (`enemyFire` case 15)
+            for compass in [0.0, 45.0, 135.0, 180.0, 225.0, 315.0] as [CGFloat] {
+                let radians = compass * .pi / 180.0
+                spawnEnemyShot(
+                    weaponId: 23,
+                    x: o.x + 8.0,
+                    y: o.y - 4.0,
+                    speedX: 70 * sin(radians),
+                    speedY: -70 * cos(radians),
+                    angleDeg: compass
+                )
+            }
+            return
         default:
             return
         }
@@ -687,8 +672,6 @@ extension StageScene {
 
             if o.id == 8 {
                 angle -= 20.0
-            } else if o.id == 15 {
-                angle += 45.0
             }
         }
     }
@@ -906,22 +889,16 @@ extension StageScene {
         }
 
         if o.id == 10 {
-            if instantKill {
-                killEnemyObject(o)
-                return true
-            }
-            // Ignore hits while the two halves are actively separating/reassembling (`o.gpr3 != 0`)
-            if o.gpr3 != 0 {
+            // Halves still sliding apart can't be hit (`CollisionSystem::hitObject` case 10)
+            if abs(o.gpr2) == 1000 {
                 return false
             }
-            if o.gpr1 > 1 {
-                let nextHp = max(1, Int(o.gpr1) - 1)
-                let leftHalf = spawnEnemyObject(id: o.id, x: o.x, y: o.y, objCfg: 1, waveGroupId: o.waveGroupId, enqueueRemaining: false)
-                leftHalf?.aux1 = nextHp
-                let rightHalf = spawnEnemyObject(id: o.id, x: o.x, y: o.y, objCfg: 2, waveGroupId: o.waveGroupId, enqueueRemaining: false)
-                rightHalf?.aux1 = nextHp
-                o.isFree = true
+            if o.gpr3 == 0 {
+                // A whole zombie (even touched by the invincible aura) splits in two and leaves no points behind
+                spawnEnemyObject(id: 10, x: o.x, y: o.y, objCfg: -1000, waveGroupId: 0, enqueueRemaining: false)
+                spawnEnemyObject(id: 10, x: o.x, y: o.y, objCfg: 1000, waveGroupId: 0, enqueueRemaining: false)
                 RetroAudioSynthesizer.shared.playSfx(.split)
+                o.isFree = true
                 return true
             }
             killEnemyObject(o)

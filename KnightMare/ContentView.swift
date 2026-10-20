@@ -25,6 +25,10 @@ struct ContentView: View {
                 StageClearView(gameState: gameState)
                     .transition(.opacity)
 
+            case .ending:
+                EndingView(gameState: gameState)
+                    .transition(.opacity)
+
             case .gameOver:
                 GameOverView(gameState: gameState)
                     .transition(.opacity)

@@ -64,6 +64,8 @@ extension StageScene {
             // Waits unseen at its home spot until the arena opens (`showBossBody` only on activation)
             boss.x = phantomKnightHome.x
             boss.y = Self.tileSizeF * 6.0
+        case .eyeLord:
+            boss.y = (currentRow == 0) ? (Self.tileSizeF * 6.0) : (-Self.tileSizeF * 3.0) // 48 or -24
         }
 
         let tex = bossSheetTexture(x: bossBaseFrame.x, y: bossBaseFrame.y)
@@ -72,6 +74,12 @@ extension StageScene {
         node.isHidden = (definition.bossKind == .phantomKnight)
         enemiesLayerNode.addChild(node)
         boss.node = node
+
+        if definition.bossKind == .eyeLord {
+            // Five eyes to start; the central eye (1) opens once they are gone (`createBossEye(2...6)`)
+            for index in 2...6 { addBossEye(index: index) }
+            syncEyeLordLife()
+        }
     }
 
     private func spawnBossShadow(tileId: Int, offset: CGPoint) {
@@ -108,6 +116,11 @@ extension StageScene {
             // Starts guarded until its helmet first opens (`activateShield(true)`, `activateHitBox(2, false)`)
             boss.isShielded = true
             boss.stepTick = 0
+        case .eyeLord:
+            // Same three cloud minions as Medusa, without replacements (`activateBoss` cases 1 and 8)
+            enqueueBossMinion(objId: 5, x: 0, y: 0, delayMs: 3000)
+            enqueueBossMinion(objId: 5, x: 0, y: 0, delayMs: 6500)
+            enqueueBossMinion(objId: 5, x: 0, y: 0, delayMs: 9500)
         case .phantomKnight:
             boss.node?.isHidden = false
             boss.stepTick = 0
@@ -146,7 +159,7 @@ extension StageScene {
             let alive = enemies.filter { !$0.isFree && $0.id < 20 }.count
             guard alive < 2 else { return }
             enqueueBossMinion(objId: 4, x: phantomKnightHome.x, y: phantomKnightHome.y, delayMs: Int.random(in: 2000...7000))
-        case .scytheReaper, .wingedDemon, .cyclops, .redKnight, .ogre:
+        case .scytheReaper, .wingedDemon, .cyclops, .redKnight, .ogre, .eyeLord:
             break
         }
     }
@@ -182,7 +195,8 @@ extension StageScene {
         let dt = CGFloat(Self.tickInterval)
 
         switch definition.bossKind {
-        case .medusa:
+        case .medusa, .eyeLord:
+            // Every 150 ticks picks the spot above Popolon and walks there (`moveBoss` cases 1 and 8)
             let edgeLeft = Self.tileSizeX4 // 32
             let rightEdge = (Self.msxWidth - Self.tileSizeX4) - (Self.tileSizeF * 5.0) // 224 - 40 = 184
 
@@ -341,6 +355,7 @@ extension StageScene {
         case .medusa, .scytheReaper, .wingedDemon: return CGSize(width: 40, height: 40)
         case .cyclops, .redKnight, .ogre: return CGSize(width: 40, height: 48)
         case .phantomKnight: return CGSize(width: 16, height: 16)
+        case .eyeLord: return CGSize(width: 48, height: 48)
         }
     }
 
@@ -363,6 +378,7 @@ extension StageScene {
         case .redKnight: return (120, 80)
         case .ogre: return (0, 128)
         case .phantomKnight: return (0, 56)
+        case .eyeLord: return (80, 128)
         }
     }
 
@@ -400,6 +416,11 @@ extension StageScene {
             }
             node.texture = bossSheetTexture(x: x, y: bossBaseFrame.y)
             node.xScale = (animTick % 6 <= 2) ? -1 : 1
+        case .eyeLord:
+            // The body pulses between two frames; each eye runs its own open/close cycle
+            let x = bossBaseFrame.x + ((animTick % 12 > 5 && boss.status != .dying) ? 48 : 0)
+            node.texture = bossSheetTexture(x: x, y: bossBaseFrame.y)
+            animateBossEyes()
         }
     }
 
@@ -452,6 +473,16 @@ extension StageScene {
             guard tickCount % 70 == 0,
                   Double.random(in: 0...1) < definition.shootChance(for: gameState?.difficulty ?? .normal) else { return }
             fireKnightArrow(fromX: boss.x, fromY: boss.y, speed: 100)
+        case .eyeLord:
+            // Each open eye fires on its own cadence, rolling the stage's shoot chance (`bossFire` case 8)
+            let chance = definition.shootChance(for: gameState?.difficulty ?? .normal)
+            for eye in boss.eyes where !eye.isDestroyed && eye.isOpen && tickCount % eye.fireInterval == 0 {
+                guard Double.random(in: 0...1) < chance else { continue }
+                fireBossFireball(
+                    landsAtPopolon: false,
+                    origin: CGPoint(x: boss.x + eye.offset.x + Self.tileSizeF, y: boss.y + eye.offset.y + Self.tileSizeF)
+                )
+            }
         }
     }
 
@@ -472,9 +503,9 @@ extension StageScene {
 
     /// Single fireball (`28`, `calcId` 54/56/58) aimed downward (150°-210°) at Popolon at 110 px/s. The Stage 4 boss
     /// throws the red variant (`+16` px) that lands at Popolon's height and burns; the others fly straight on.
-    private func fireBossFireball(landsAtPopolon: Bool) {
-        let originX = boss.x + Self.tileSizeX2
-        let originY = boss.y + Self.tileSizeF * 4.0
+    private func fireBossFireball(landsAtPopolon: Bool, origin: CGPoint? = nil) {
+        let originX = origin?.x ?? boss.x + Self.tileSizeX2
+        let originY = origin?.y ?? boss.y + Self.tileSizeF * 4.0
         let aim = min(210.0, max(150.0, compassAngleTowardPopolon(fromX: originX, fromY: originY)))
         let radians = aim * .pi / 180.0
         let speed: CGFloat = 110
@@ -550,6 +581,125 @@ extension StageScene {
     }
 
     // MARK: - Boss Collisions & Damage (`hitBoss`, `killBoss`, `destroyBoss`)
+
+    /// Resolves a player shot touching the active boss. Returns `true` when the shot is used up.
+    /// Most bosses take it on their hitbox; the Stage 8 boss is only hurt through its open eyes, closed eyes absorb
+    /// the shot, and its body lets shots pass (`isBossBody` is skipped by the shot collision pass).
+    func bossAbsorbsShot(_ shotRect: CGRect) -> Bool {
+        guard definition.bossKind == .eyeLord else {
+            guard shotRect.intersects(bossHitBoxRect()) else { return false }
+            _ = hitBoss()
+            return true
+        }
+        for eye in boss.eyes where !eye.isDestroyed {
+            let eyeRect = CGRect(x: boss.x + eye.offset.x, y: boss.y + eye.offset.y, width: 16, height: 16)
+            guard shotRect.intersects(eyeRect) else { continue }
+            if eye.isOpen {
+                damageBossEye(eye)
+            } else {
+                RetroAudioSynthesizer.shared.playSfx(.bossShield)
+            }
+            return true
+        }
+        return false
+    }
+
+    // MARK: - Stage 8 Boss Eyes (`createBossEye`, `hitBoss` stage 8, `animateObjects` case 50)
+
+    private func addBossEye(index: Int) {
+        let offsets: [Int: CGPoint] = [
+            1: CGPoint(x: 16, y: 0),
+            2: CGPoint(x: 3, y: 6), 3: CGPoint(x: 29, y: 6),
+            4: CGPoint(x: 16, y: 16),
+            5: CGPoint(x: 3, y: 22), 6: CGPoint(x: 29, y: 22)
+        ]
+        guard let offset = offsets[index], let body = boss.node else { return }
+        let node = SKSpriteNode(texture: bossEyeTexture(column: 0, row: 2), size: CGSize(width: 16, height: 16))
+        node.zPosition = 0.1
+        // Child of the 48×48 body (centre anchor, y up), so the eye follows it
+        node.position = CGPoint(x: offset.x + 8 - 24, y: -(offset.y + 8 - 24))
+        body.addChild(node)
+        // Shot cadence `130 + 10 * hitBoxIndex` (hit box = eye + 1), the central eye four times faster
+        let interval = (index == 1) ? 37 : 130 + 10 * (index + 1)
+        // `boss.maxHp` holds one eye's life only until the first `syncEyeLordLife()` turns it into the 6-eye total
+        let eyeLife = boss.eyes.first?.maxHp ?? boss.maxHp
+        boss.eyes.append(BossEye(
+            index: index,
+            offset: offset,
+            node: node,
+            maxHp: eyeLife,
+            fireInterval: interval,
+            cycleLength: 100 + index,
+            cycleOffset: index * 17
+        ))
+    }
+
+    /// Balanced eye cycle (the reference leaves eyes open ~90% of the time because of a negative offset):
+    /// open ~2.8 s (hurtable, blinking), half-closed 0.3 s, shut ~1.7 s, half-open 0.3 s. Every eye has its own
+    /// length and starting point, so they rarely close together.
+    private func animateBossEyes() {
+        for eye in boss.eyes {
+            guard !eye.isDestroyed else {
+                eye.node.texture = bossEyeTexture(column: 5, row: 0)
+                eye.node.xScale = 1
+                continue
+            }
+            let t = (animTick + eye.cycleOffset) % eye.cycleLength
+            let openTicks = 56
+            let halfTicks = 6
+            let row: Int
+            if t < openTicks {
+                row = 2
+            } else if t < openTicks + halfTicks || t >= eye.cycleLength - halfTicks {
+                row = 1
+            } else {
+                row = 0
+            }
+            eye.isOpen = (row == 2)
+            eye.node.xScale = (eye.isOpen && (t / 8) % 2 == 1) ? -1 : 1
+            // Damage colour: white → cyan → yellow → pink → red (`5 - life / (maxLife / 5)`)
+            let column = min(4, max(0, Int(5.0 - Double(eye.hp) / (Double(eye.maxHp) / 5.0))))
+            eye.node.texture = bossEyeTexture(column: column, row: row)
+        }
+    }
+
+    private func damageBossEye(_ eye: BossEye) {
+        eye.hp = max(0, eye.hp - (playerWeapon.isSuperWeapon ? 2 : 1))
+        syncEyeLordLife()
+        guard eye.isDestroyed else {
+            RetroAudioSynthesizer.shared.playSfx(.bossHit)
+            return
+        }
+        // The eye bursts and stays as a blot (`killEnemy(hit, true)`)
+        eye.node.texture = bossEyeTexture(column: 5, row: 0)
+        eye.node.xScale = 1
+        if let fire = spawnEnemyObject(id: 34, x: boss.x + eye.offset.x, y: boss.y + eye.offset.y, objCfg: 1, waveGroupId: 0, enqueueRemaining: false) {
+            fire.gpr1 = 0
+            applyEnemyBaseTile(fire, tileId: 34)
+        }
+        RetroAudioSynthesizer.shared.playSfx(.enemyKill)
+
+        guard boss.eyes.allSatisfy(\.isDestroyed) else { return }
+        if boss.eyes.contains(where: { $0.index == 1 }) {
+            killBoss()
+        } else {
+            addBossEye(index: 1)
+            syncEyeLordLife()
+        }
+    }
+
+    /// HUD life for the Stage 8 boss: the sum of all six eyes (the central one counts as full until it opens).
+    private func syncEyeLordLife() {
+        let eyeLife = boss.eyes.first?.maxHp ?? boss.maxHp
+        let pendingCentral = boss.eyes.contains(where: { $0.index == 1 }) ? 0 : eyeLife
+        boss.hp = boss.eyes.reduce(pendingCentral) { $0 + $1.hp }
+        boss.maxHp = eyeLife * 6
+        syncHudState()
+    }
+
+    private func bossEyeTexture(column: Int, row: Int) -> SKTexture? {
+        SpriteSheetManager.shared.texture(from: .bosses, x: 176 + 16 * column, y: 128 + 16 * row, width: 16, height: 16)
+    }
 
     func bossHitBoxRect() -> CGRect {
         if definition.bossKind == .phantomKnight {

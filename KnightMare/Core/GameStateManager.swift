@@ -12,6 +12,7 @@ final class GameStateManager {
         case titleScreen
         case playingStage
         case stageClear
+        case ending
         case gameOver
     }
 
@@ -169,6 +170,14 @@ final class GameStateManager {
         isStagePaused = false
         bossHp = 0
         bossMaxHp = 0
+        guard hasNextStage else {
+            // Final stage beaten: the Aphrodite rescue cutscene (the reference's "stage 9")
+            RetroAudioSynthesizer.shared.playStageStartFanfare()
+            withAnimation(.easeInOut(duration: 0.4)) {
+                currentScreen = .ending
+            }
+            return
+        }
         RetroAudioSynthesizer.shared.playTitleFanfare()
         withAnimation(.easeInOut(duration: 0.4)) {
             currentScreen = .stageClear

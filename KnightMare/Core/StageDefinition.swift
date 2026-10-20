@@ -11,6 +11,7 @@ struct StageDefinition: Equatable {
         case redKnight // Stage 5 (dashes, helmet that opens and closes, twin falling axes `32`)
         case ogre // Stage 6 (stomps open ground fissures `49`, single fireballs `28`)
         case phantomKnight // Stage 7 (small flying knight, speeds up when hurt, calls Blue Knights, arrows)
+        case eyeLord // Stage 8 (only its eyes can be hurt; each open eye fires; central eye opens last)
     }
 
     let number: Int
@@ -140,7 +141,25 @@ struct StageDefinition: Equatable {
         enemyFireMaxRow: StageMapData.mapRows
     )
 
-    static let all: [StageDefinition] = [.stage1, .stage2, .stage3, .stage4, .stage5, .stage6, .stage7]
+    static let stage8 = StageDefinition(
+        number: 8,
+        title: "CASTLE OF NIGHTMARES",
+        mapAssetName: "stage8_map",
+        tilesetOffsetPx: 152,
+        bossBaseLife: 24, // per eye (`BOSS_LIFE[8]`)
+        shootChance: [0.6, 0.8, 1.0],
+        // Even stages reuse the Stage 2 theme
+        stageMusic: .stage2,
+        bossMusic: .boss2,
+        bossKind: .eyeLord,
+        clearMessage: "YOU HAVE BEATEN ALL DEMONS !",
+        enemyFireMaxRow: StageMapData.mapRows
+    )
+
+    static let all: [StageDefinition] = [.stage1, .stage2, .stage3, .stage4, .stage5, .stage6, .stage7, .stage8]
+
+    /// The ending cutscene's single screen (`stage9.map`: 22 rows, Stage 8 tileset).
+    static let endingMapAssetName = "stage9_map"
 
     /// Definition for a 1-based stage number, falling back to the last implemented stage.
     static func forStage(_ number: Int) -> StageDefinition {

@@ -1112,9 +1112,8 @@ final class StageScene: SKScene {
                 continue
             }
 
-            // 1c. Check the stage boss hitbox (`BossSystem::hitBoss`; a shielded boss still absorbs the shot)
-            if boss.status == .active && sRect.intersects(bossHitBoxRect()) {
-                _ = hitBoss()
+            // 1c. Check the stage boss (`BossSystem::hitBoss`; a shielded boss still absorbs the shot)
+            if boss.status == .active && bossAbsorbsShot(sRect) {
                 shot.isFree = true
                 continue
             }

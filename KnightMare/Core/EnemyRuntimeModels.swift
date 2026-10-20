@@ -180,6 +180,8 @@ final class StageBossRuntime {
     var dashVelocity: CGFloat = 0
     /// Stage 7 boss: flight direction (math angle in degrees, y pointing down).
     var heading: CGFloat = 0
+    /// Stage 8 boss eyes (the central eye is appended once the other five are destroyed).
+    var eyes: [BossEye] = []
 
     var node: SKSpriteNode?
 
@@ -195,6 +197,7 @@ final class StageBossRuntime {
         isShielded = false
         dashVelocity = 0
         heading = 0
+        eyes.removeAll()
         status = .notSpawned
         x = 108
         y = -24
@@ -233,5 +236,36 @@ final class GroundFissure {
     /// Current crack length in px (`8 + min(96, 8 * step)`, `ObjectSystem::animateObjects` case 49).
     var length: CGFloat {
         8 + 8 * CGFloat(min(step, Self.maxGrowthSteps))
+    }
+}
+
+/// One eye of the Stage 8 boss (`createBossEye` in `BossSystem.cpp`). Only eyes take damage: each has its own life,
+/// opens and closes on its own cycle (hurtable only while open) and fires on its own cadence.
+final class BossEye {
+    /// Eye 1 is the central eye at the top, which only opens after eyes 2...6 are destroyed.
+    let index: Int
+    /// Top-left of the eye relative to the boss body's top-left.
+    let offset: CGPoint
+    let node: SKSpriteNode
+    let maxHp: Int
+    var hp: Int
+    /// Ticks between shots (`130 + 10 * hitBoxIndex`, the central eye four times faster).
+    let fireInterval: Int
+    /// Length of its open/close cycle in animation ticks, and where in it this eye starts.
+    let cycleLength: Int
+    let cycleOffset: Int
+    var isOpen: Bool = true
+
+    var isDestroyed: Bool { hp <= 0 }
+
+    init(index: Int, offset: CGPoint, node: SKSpriteNode, maxHp: Int, fireInterval: Int, cycleLength: Int, cycleOffset: Int) {
+        self.index = index
+        self.offset = offset
+        self.node = node
+        self.maxHp = maxHp
+        self.hp = maxHp
+        self.fireInterval = fireInterval
+        self.cycleLength = cycleLength
+        self.cycleOffset = cycleOffset
     }
 }
